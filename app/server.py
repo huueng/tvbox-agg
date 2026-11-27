@@ -1701,11 +1701,19 @@ def main():
     ap.add_argument("--no-startup-run", action="store_true")
     a = ap.parse_args()
 
-    # 没有令牌又监听 0.0.0.0 = 管理面板裸奔。内网自用没问题，
-    # 但一旦映射到公网就是任何人可改配置，这里必须提醒。
-    if not a.token and a.bind == "0.0.0.0":
-        print("!! 警告：没有设置 TOKEN 且监听 0.0.0.0，管理面板与写接口无鉴权。\n"
-              "!! 内网自用可忽略；要暴露到公网请设置 TOKEN 环境变量（如 openssl rand -hex 12）。")
+    # 既没有 TOKEN、也没有在面板里改过密码，还监听 0.0.0.0 = 管理面板裸奔。
+    # 内网自用没问题，但一旦映射到公网就是任何人可改配置，这里必须提醒。
+    # （老数据里通常已经有 auth.json，那种情况不算裸奔，别误报）
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(a.seeds)),
+                               "auth.json"), encoding="utf-8") as _af:
+            _has_pw = bool(json.load(_af).get("hash"))
+    except Exception:
+        _has_pw = False
+    if not a.token and a.bind == "0.0.0.0" and not _has_pw:
+        print("!! 警告：既没有 TOKEN 也没有设置面板密码，却监听 0.0.0.0 —— "
+              "管理面板与写接口无鉴权。\n"
+              "!! 内网自用可忽略；要暴露到公网请设置 TOKEN（如 openssl rand -hex 12）。")
 
     CFG.update(seeds=a.seeds, out=a.out, state=a.state, workers=a.workers,
                timeout=a.timeout, drop_after=a.drop_after, token=a.token,
