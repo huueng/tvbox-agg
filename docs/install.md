@@ -34,25 +34,33 @@ docker pull ghcr.io/huueng/tvbox-agg:0.9
 多架构（amd64 / arm64），由 GitHub Actions 自动构建。
 不想自己构建的话，下面 compose 里的 `build: .` 可以直接删掉。
 
-## docker compose 部署
+## docker compose 部署（推荐）
+
+**不需要克隆仓库**，只下两个文件：
 
 ```bash
-git clone <仓库地址> tvbox-agg
-cd tvbox-agg
-mkdir -p data
+mkdir -p tvbox-agg/data && cd tvbox-agg
 
-cat > .env <<'EOF'
-# 客户端能访问到的地址（不是 127.0.0.1！）
-BASE_URL=http://192.168.1.10:5680
-# 管理令牌，随便生成一串：openssl rand -hex 12
-TOKEN=请替换成随机字符串
-EOF
+curl -fsSLO https://raw.githubusercontent.com/huueng/tvbox-agg/main/docker-compose.yml
+curl -fsSL -o .env https://raw.githubusercontent.com/huueng/tvbox-agg/main/.env.example
 
-docker compose up -d --build
+vi .env      # 填 TOKEN（openssl rand -hex 12），BASE_URL 一般留空
+
+docker compose up -d
 docker compose logs -f      # 看第一次聚合的进度
 ```
 
 第一次聚合大概 3~10 分钟。看到 `聚合完成：...` 就可以用了。
+
+### 想自己构建镜像
+
+```bash
+git clone https://github.com/huueng/tvbox-agg.git
+cd tvbox-agg
+cp .env.example .env && vi .env
+# 取消 docker-compose.yml 里 "build: ." 的注释
+docker compose up -d --build
+```
 
 ---
 
@@ -63,7 +71,6 @@ docker run -d --name tvbox-agg \
   --network host \
   --restart unless-stopped \
   -e TZ=Asia/Shanghai \
-  -e BASE_URL=http://192.168.1.10:5680 \
   -e TOKEN=$(openssl rand -hex 12) \
   -e INTERVAL=6 \
   -v /你的路径/tvbox-data:/app/data \
@@ -72,6 +79,9 @@ docker run -d --name tvbox-agg \
 
 > 用 `--network host` 而不是 `-p 5680:5680`：
 > bridge 网络里拿不到 IPv6，纯 v6 的直播线路会被误判成死的。
+>
+> 生成的配置里地址不对（例如走了反代、或机器有多网卡）时，再加
+> `-e BASE_URL=http://你的设备地址:5680` 覆盖。
 
 ---
 
@@ -83,7 +93,7 @@ docker run -d --name tvbox-agg \
 |---|---|---|
 | `PORT` | `5680` | 监听端口 |
 | `BIND` | `0.0.0.0` | 监听地址 |
-| `BASE_URL` | 空 | **写进输出配置的对外地址**。留空则用请求的 Host 推断，反代场景建议显式设置 |
+| `BASE_URL` | 空 | 写进输出配置的对外地址。**一般留空**（自动用访问时的 Host 推断）；反代或多网卡时再显式设置 |
 | `TOKEN` | 空 | 面板密码 / 写接口令牌。**留空且监听 0.0.0.0 = 无鉴权**，启动时会警告 |
 | `INTERVAL` | `6` | 自动聚合间隔（小时），`0` = 只手动 |
 | `WORKERS` | `3` | 单轮并发。采集站对并发握手敏感，3~4 比较稳 |
@@ -102,7 +112,7 @@ docker run -d --name tvbox-agg \
 TVBox 客户端对 HTTPS 支持一般，**能用 HTTP 就别上 HTTPS**。
 如果一定要走反代（比如外网访问），注意三点：
 
-1. `BASE_URL` 必须写**反代后的公网地址**，否则配置里还是内网 IP
+1. `BASE_URL` 要写**反代后的公网地址**（留空会被推断成内网 IP）
 2. 不要改写路径前缀（`/tvbox.json`、`/live/...` 都是根路径）
 3. 关掉缓冲，配置是流式返回的
 

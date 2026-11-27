@@ -295,7 +295,7 @@ class TestSiteReason(unittest.TestCase):
     def test_local_address(self):
         for api, ext in (("http://127.0.0.1:9978/x", None),
                          ("http://localhost/api", None),
-                         ("http://x/api", "http://192.168.1.10/token.txt"),
+                         ("http://x/api", "http://10.0.0.2/token.txt"),
                          ("http://x/api", "http://10.0.0.2/t")):
             self.assertEqual(A.site_reason({"name": "站", "api": api, "ext": ext}),
                              A.REASON_LOCAL, api)

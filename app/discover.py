@@ -15,9 +15,9 @@ spider/jar 型（type=3）或已失效，必须"抽出来 → 逐个探活 → �
   --merge            → 按域名去重后追加到 sources.json
 
 用法：
-  python discover.py --from http://192.168.1.10:6/
-  python discover.py --from http://192.168.1.10:6/ --check --merge
-  python discover.py --from http://192.168.1.10:6/ --dry-run      # 只看抽到多少
+  python discover.py --from http://192.0.2.10:6/
+  python discover.py --from http://192.0.2.10:6/ --check --merge
+  python discover.py --from http://192.0.2.10:6/ --dry-run      # 只看抽到多少
 """
 
 import argparse

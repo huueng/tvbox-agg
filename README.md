@@ -16,6 +16,24 @@
 > **许可**：源码可见，但**不是开源软件**——禁止商业使用、禁止二次分发。
 > 详见 [LICENSE](LICENSE)。
 
+## 致谢（请先看这段）
+
+> ## **这个项目不生产任何内容。**
+>
+> 它做的一切，都建立在别人维护的**公开配置接口、采集站、插件和直播源**之上。
+> 没有这些作者的持续维护，这个项目连一个片子都放不出来。
+>
+> **如果你就是其中某份配置、某个接口或某个 jar 的作者**，觉得这里的做法不妥
+> （比如不希望被收录、希望标注出处、希望调整抓取频率），请开 issue，
+> 我会立刻改或者直接移出。**这个项目没有任何商业目的，也不建议任何人拿它去卖钱。**
+
+具体借鉴与依赖：
+
+- [TVBox](https://github.com/o0HalfLife0o/TVBoxOSC) / 影视仓 / Fongmi 生态 —— 配置文件格式、多仓协议
+- [LibreTV](https://github.com/LibreSpark/LibreTV) —— 轻量网页播放器的接口约定
+- ElderTV —— "扫不了就不放行"的插件策略思路、站点过滤的三分类
+- **所有公开配置、采集接口、spider jar 的维护者** —— 没有你们就没有可聚合的东西
+
 ---
 
 ## 特性
@@ -48,48 +66,62 @@
 
 ## 快速开始
 
-### 方式零：直接拉镜像
-
-```bash
-docker pull ghcr.io/huueng/tvbox-agg:0.9
-```
-
-镜像由 GitHub Actions 在打 tag 时自动构建（amd64 + arm64）。
+不需要源码，三步就能跑起来。
 
 ### 方式一：docker compose（推荐）
 
+只下两个文件，不用克隆整个仓库：
+
 ```bash
-mkdir tvbox-agg && cd tvbox-agg
-# 把本仓库的 docker-compose.yml 和 Dockerfile 放进来
-mkdir -p data
+mkdir -p tvbox-agg/data && cd tvbox-agg
 
-cat > .env <<'EOF'
-BASE_URL=http://192.168.1.10:5680
-TOKEN=换成你自己的随机串
-EOF
+curl -fsSLO https://raw.githubusercontent.com/huueng/tvbox-agg/main/docker-compose.yml
+curl -fsSL -o .env https://raw.githubusercontent.com/huueng/tvbox-agg/main/.env.example
 
+# 编辑 .env，把 TOKEN 改成自己的随机串：
+#   TOKEN=$(openssl rand -hex 12)
+vi .env
+
+docker compose up -d
+docker compose logs -f      # 看第一次聚合的进度，约 3~10 分钟
+```
+
+然后打开 `http://<你的设备IP>:5680/status`。
+
+> **根路径 `/` 是配置文件**（TVBox 的接口地址直接填它），面板在 `/status`。
+
+`.env` 里两项的意思：
+
+| 变量 | 怎么填 |
+|---|---|
+| `TOKEN` | **建议必填**。面板密码，也是写接口的令牌。留空等于不鉴权（内网自用可以，别暴露公网） |
+| `BASE_URL` | **一般留空**。留空会自动用你访问时的地址；只有走反向代理、或机器有多个网卡时才需要填，比如 `http://你的设备地址:5680` |
+
+### 方式二：想改代码 / 自己构建
+
+```bash
+git clone https://github.com/huueng/tvbox-agg.git
+cd tvbox-agg
+cp .env.example .env && vi .env
+
+# 取消 docker-compose.yml 里 "build: ." 那行的注释，然后：
 docker compose up -d --build
 ```
 
-打开 `http://192.168.1.10:5680/status` 就能看到面板。
-
-> 注意：根路径 `/` 是**默认档配置**（TVBox 的接口地址直接填它），
-> 面板在 `/status`。
-
-### 方式二：一行 docker run
+### 方式三：一行 docker run
 
 ```bash
 docker run -d --name tvbox-agg \
   --network host \
   --restart unless-stopped \
-  -e BASE_URL=http://192.168.1.10:5680 \
   -e TOKEN=$(openssl rand -hex 12) \
   -v $PWD/data:/app/data \
   ghcr.io/huueng/tvbox-agg:0.9
 ```
 
-> `BASE_URL` 一定要填**客户端能访问到的地址**，不能是容器内的 `127.0.0.1`，
-> 否则生成的配置里全是客户端连不上的地址。
+> 用 `--network host`：bridge 网络拿不到 IPv6，纯 v6 的直播线路会被误判成死的。
+>
+> 生成的配置里地址不对（比如走了反代）时，再加 `-e BASE_URL=http://你的设备地址:5680` 覆盖。
 
 ### 首次使用
 
@@ -103,7 +135,7 @@ docker run -d --name tvbox-agg \
 
 ## 输出地址
 
-设该服务地址为 `http://192.168.1.10:5680`（即 `BASE_URL`）：
+设该服务地址为 `http://<你的设备IP>:5680`：
 
 | 用途 | 地址 | 说明 |
 |---|---|---|
@@ -162,17 +194,6 @@ data/
 
 本项目**不是开源软件**：源码公开只为便于审阅（尤其是插件扫描这类安全逻辑），
 不授予商业使用和二次分发的权利。
-
----
-
-## 致谢
-
-这个项目的很多设计来自对现有工具**行为**的观察（它们大多不开源，这里是重新实现）：
-
-- [TVBox](https://github.com/o0HalfLife0o/TVBoxOSC) / 影视仓 / Fongmi 生态 —— 配置文件格式、多仓协议
-- [LibreTV](https://github.com/LibreSpark/LibreTV) —— 轻量网页播放器的接口约定
-- ElderTV —— "扫不了就不放行"的插件策略思路、站点过滤的三分类
-- 所有公开配置、采集接口、spider jar 的维护者 —— 没有你们就没有可聚合的东西
 
 ---
 

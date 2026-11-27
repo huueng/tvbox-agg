@@ -1,8 +1,9 @@
 services:
   tvbox-agg:
-    # 官方镜像在 GHCR；本地改代码时 docker compose up -d --build 会用 build 覆盖
     image: ghcr.io/huueng/tvbox-agg:0.9
-    build: .
+    # 只想跑的话不用动上面这行（会自动拉镜像）。
+    # 想用本地源码构建：把下面这行取消注释，然后 docker compose up -d --build
+    # build: .
     container_name: tvbox-agg
     restart: unless-stopped
     # host 网络：直播源里有不少纯 IPv6 地址，bridge 网络拿不到 IPv6，
@@ -11,8 +12,9 @@ services:
     environment:
       TZ: Asia/Shanghai
       PORT: "5680"
-      # 写进配置里的对外地址：客户端要靠它访问本服务，不能写容器内的 127.0.0.1
-      BASE_URL: "${BASE_URL:-http://192.168.1.10:5680}"
+      # 写进配置里的对外地址。留空会自动用你访问时的地址；
+      # 走反向代理或多网卡时再填，比如 http://你的设备地址:5680
+      BASE_URL: "${BASE_URL:-}"
       # 管理页 / 写接口的令牌，务必改掉。留空则自动生成并打印在日志里
       TOKEN: "${TOKEN:-}"
       INTERVAL: "6"          # 每 6 小时自动重聚合

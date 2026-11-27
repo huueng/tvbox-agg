@@ -22,7 +22,7 @@
 
 用法
   python server.py                          # 0.0.0.0:5680，间隔 6h
-  python server.py --bind 192.168.1.10       # 只监听局域网地址
+  python server.py --bind 192.0.2.10       # 只监听局域网地址
   python server.py --interval 2 --token xx  # 2 小时一次，刷新要 token
   环境变量：PORT / BIND / INTERVAL / TOKEN / BASE_URL / OUT_DIR / SEEDS
 """
@@ -1685,7 +1685,7 @@ def main():
     ap.add_argument("--token", default=os.environ.get("TOKEN", ""),
                     help="/refresh 的访问令牌，留空则不需鉴权")
     ap.add_argument("--base-url", default=os.environ.get("BASE_URL", ""),
-                    help="写进面板/多仓的对外地址，如 http://192.168.1.10:5680")
+                    help="写进面板/多仓的对外地址，如 http://192.0.2.10:5680")
     ap.add_argument("--seeds", default=os.environ.get("SEEDS",
                     os.path.join(HERE, "sources.json")))
     ap.add_argument("--out", default=os.environ.get("OUT_DIR",
