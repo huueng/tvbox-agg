@@ -684,16 +684,14 @@ function renderInner(o){
       : '<tr><td class="mut">没有问题，这里是空的</td></tr>';
 
   const eps = [
-    ['/tvbox.json', '默认档：CMS + jar + py（影视仓用这个）'],
-    ['/all.json', '全能档：CMS + jar + js + py（不含网盘）'],
-    ['/ltv.json', 'LibreTV 源列表'],
-    ['/tvbox-direct.json', '直连版（不走代理，排查用）'],
-    ['/live/cctv.m3u', '直播主接口：央视 + 卫视（按清晰度/延迟排名）'],
-    ['/live/other.m3u', '直播副接口：央视 + 卫视 + 港澳台 + 地方台（全量）'],
-    ['/live/cctv.json', '直播 TVBox lives 结构（主接口同源）'],
+    ['/tvbox.json', '默认档：CMS + jar + py（影视仓填这个）'],
+    ['/tvbox-all.json', '全能档：CMS + jar + js + py'],
+    ['/libretv.json', 'LibreTV 源列表（纯 CMS，格式与 TVBox 不同）'],
+    ['/cctv.m3u', '直播主：央视 + 卫视'],
+    ['/other.m3u', '直播副：央视 + 卫视 + 港澳台 + 地方台'],
+    ['/tvbox-direct.json', '直连档：只 CMS 不走代理（排查用）'],
     ['/status', '本管理页'],
     ['/report.md', '体检报告（人看）'],
-    ['/api/cmslog', '最近的 /cms 请求日志（排查）'],
   ];
   document.getElementById('endpoints').innerHTML =
     '<tr><th>地址</th><th>用途</th></tr>' +

@@ -1,5 +1,28 @@
 # 更新日志
 
+## 0.9.6 — 2026-11-27
+
+- **输出地址收敛**（删掉初期测试留下的重复别名）：
+
+  | 规范地址 | 用途 |
+  |---|---|
+  | `/tvbox.json` | 默认档 |
+  | `/tvbox-all.json` | 全能档 |
+  | `/tvbox-direct.json` | 直连档（排查用） |
+  | `/libretv.json` | LibreTV 源（纯 CMS） |
+  | `/cctv.m3u` | 直播主：央视 + 卫视 |
+  | `/other.m3u` | 直播副：央视 + 卫视 + 港澳台 + 地方台 |
+
+  - 删除：`/index.json`、`/tvbox`、`/all.json`、`/tvbox-all`、`/direct.json`、
+    `/libretv`、`/ltv.json`、`/ltv`、`/tvbox-full.json`、`/full.json`、`/tvbox-full`、
+    `.m3u8` 后缀、`/live/cctv.json`、`/live/local.json`、`/live/other.json`
+  - 兼容保留（老电视可能已经填了）：`/`（等同默认档）、`/live/cctv.m3u`、
+    `/live/other.m3u`、`/live/local.m3u`
+- 「全量档」`/tvbox-full.json` 确认为历史概念：返回内容和 `/tvbox.json` 完全相同，
+  且只在内存里，重启后未聚合就是 404 —— 一并删掉
+- 修：客户端断开时 `_send` 抛 `BrokenPipeError` 刷日志
+
+
 ## 0.9.5 — 2026-11-27
 
 - **默认聚合周期**：每 N 小时 → **每天 03:30**，`interval_hours` 6 → 12
