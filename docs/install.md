@@ -36,29 +36,43 @@ docker pull ghcr.io/huueng/tvbox-agg:0.9
 
 ## docker compose 部署（推荐）
 
-**不需要克隆仓库**，只下两个文件：
+**复制一段 compose 就能跑**，不用克隆仓库、不用建 .env。
 
 ```bash
-mkdir -p tvbox-agg/data && cd tvbox-agg
-
+mkdir -p tvbox-agg && cd tvbox-agg
 curl -fsSLO https://raw.githubusercontent.com/huueng/tvbox-agg/main/docker-compose.yml
-curl -fsSL -o .env https://raw.githubusercontent.com/huueng/tvbox-agg/main/.env.example
-
-vi .env      # 填 TOKEN（openssl rand -hex 12），BASE_URL 一般留空
-
+vi docker-compose.yml      # 只改 TOKEN 那一行
 docker compose up -d
-docker compose logs -f      # 看第一次聚合的进度
+docker compose logs -f     # 看第一次聚合，约 3~10 分钟
 ```
 
-第一次聚合大概 3~10 分钟。看到 `聚合完成：...` 就可以用了。
+要改的只有这一行：
 
-### 想自己构建镜像
+```yaml
+      - TOKEN=${TOKEN:-}        # 改成  - TOKEN=你的密码
+```
+
+其他变量都有默认值（`${VAR:-默认}`），按需覆盖即可，也可以写进同目录的 `.env`：
+
+```bash
+cp .env.example .env     # 可选，喜欢用 .env 就用
+```
+
+### 端口映射版（没有 IPv6 需求 / Portainer 受限时）
+
+```bash
+docker compose -f docker-compose.bridge.yml up -d
+```
+
+默认版用 `host` 网络是为了拿到 IPv6——直播源里纯 v6 的地址不少，
+bridge 网络下这些线路会被判成不可用。
+
+### 从源码构建
 
 ```bash
 git clone https://github.com/huueng/tvbox-agg.git
 cd tvbox-agg
-cp .env.example .env && vi .env
-# 取消 docker-compose.yml 里 "build: ." 的注释
+# 在 docker-compose.yml 的 image 行下面加一行：build: .
 docker compose up -d --build
 ```
 

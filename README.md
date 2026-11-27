@@ -66,49 +66,55 @@
 
 ## 快速开始
 
-不需要源码，三步就能跑起来。
+不需要克隆仓库，也不需要改文件——复制一段 compose 就能跑。
 
-### 方式一：docker compose（推荐）
+### 方式一：复制 compose（推荐）
 
-只下两个文件，不用克隆整个仓库：
+把仓库里 [`docker-compose.yml`](docker-compose.yml) 的内容贴进 Portainer / 群晖「项目」，
+或者存成文件：
 
 ```bash
-mkdir -p tvbox-agg/data && cd tvbox-agg
-
 curl -fsSLO https://raw.githubusercontent.com/huueng/tvbox-agg/main/docker-compose.yml
-curl -fsSL -o .env https://raw.githubusercontent.com/huueng/tvbox-agg/main/.env.example
-
-# 编辑 .env，把 TOKEN 改成自己的随机串：
-#   TOKEN=$(openssl rand -hex 12)
-vi .env
-
-docker compose up -d
-docker compose logs -f      # 看第一次聚合的进度，约 3~10 分钟
 ```
 
-然后打开 `http://<你的设备IP>:5680/status`。
+**只改一行**——把 `- TOKEN=${TOKEN:-}` 换成你自己的密码：
+
+```yaml
+      - TOKEN=换成你的密码
+```
+
+然后：
+
+```bash
+docker compose up -d
+docker compose logs -f      # 看第一次聚合，约 3~10 分钟
+```
+
+打开 `http://<你的设备IP>:5680/status`。
 
 > **根路径 `/` 是配置文件**（TVBox 的接口地址直接填它），面板在 `/status`。
 
-`.env` 里两项的意思：
+compose 里其他变量都有默认值，不用动：
 
-| 变量 | 怎么填 |
-|---|---|
-| `TOKEN` | **建议必填**。面板密码，也是写接口的令牌。留空等于不鉴权（内网自用可以，别暴露公网） |
-| `BASE_URL` | **一般留空**。留空会自动用你访问时的地址；只有走反向代理、或机器有多个网卡时才需要填，比如 `http://你的设备地址:5680` |
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `TOKEN` | 空 | **建议填**。面板密码 + 写接口令牌；留空 = 不鉴权 |
+| `BASE_URL` | 空 | 一般留空，自动用你访问时的地址；走反代再填 |
+| `PORT` | `5680` | host 网络下直接占用宿主端口 |
+| `INTERVAL` | `6` | 每几小时自动重聚合 |
 
-### 方式二：想改代码 / 自己构建
+### 方式一·变体：不想用 host 网络
+
+默认 compose 用 `host` 网络（为了拿到 IPv6，直播源里纯 v6 的不少）。
+如果你的环境必须用端口映射：
 
 ```bash
-git clone https://github.com/huueng/tvbox-agg.git
-cd tvbox-agg
-cp .env.example .env && vi .env
-
-# 取消 docker-compose.yml 里 "build: ." 那行的注释，然后：
-docker compose up -d --build
+docker compose -f docker-compose.bridge.yml up -d
 ```
 
-### 方式三：一行 docker run
+代价：容器里没有 IPv6，部分直播线路会被判成不可用。
+
+### 方式二：一行 docker run
 
 ```bash
 docker run -d --name tvbox-agg \
@@ -116,12 +122,17 @@ docker run -d --name tvbox-agg \
   --restart unless-stopped \
   -e TOKEN=$(openssl rand -hex 12) \
   -v $PWD/data:/app/data \
-  ghcr.io/huueng/tvbox-agg:0.9
+  ghcr.io/huueng/tvbox-agg:latest
 ```
 
-> 用 `--network host`：bridge 网络拿不到 IPv6，纯 v6 的直播线路会被误判成死的。
->
-> 生成的配置里地址不对（比如走了反代）时，再加 `-e BASE_URL=http://你的设备地址:5680` 覆盖。
+### 方式三：从源码构建（想改代码）
+
+```bash
+git clone https://github.com/huueng/tvbox-agg.git
+cd tvbox-agg
+# 在 docker-compose.yml 的 image 行下面加一行 build: .
+docker compose up -d --build
+```
 
 ### 首次使用
 

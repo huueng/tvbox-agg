@@ -1,29 +1,33 @@
+# 直接复制到 Portainer / 群晖「项目」里，或存成 docker-compose.yml 后 docker compose up -d
+#
+# 只有 TOKEN 建议改（面板密码），其余都可以不填。
+# 想固定版本：把 image 里的 latest 改成 0.9
 services:
   tvbox-agg:
-    image: ghcr.io/huueng/tvbox-agg:0.9
-    # 只想跑的话不用动上面这行（会自动拉镜像）。
-    # 想用本地源码构建：把下面这行取消注释，然后 docker compose up -d --build
-    # build: .
+    image: ghcr.io/huueng/tvbox-agg:latest
     container_name: tvbox-agg
-    restart: unless-stopped
     # host 网络：直播源里有不少纯 IPv6 地址，bridge 网络拿不到 IPv6，
-    # 测试时会把好源误判成死的。用 host 最省事。
+    # 会把好线路误判成死的。不想用 host 就换 docker-compose.bridge.yml
     network_mode: host
-    environment:
-      TZ: Asia/Shanghai
-      PORT: "${PORT:-5680}"   # 换端口：PORT=5690 docker compose up -d
-      # 写进配置里的对外地址。留空会自动用你访问时的地址；
-      # 走反向代理或多网卡时再填，比如 http://你的设备地址:5680
-      BASE_URL: "${BASE_URL:-}"
-      # 管理页 / 写接口的令牌，建议填上：openssl rand -hex 12
-      # 留空 = 面板不鉴权（内网自用可以，别暴露公网，启动时会打警告）
-      TOKEN: "${TOKEN:-}"
-      INTERVAL: "6"          # 每 6 小时自动重聚合
-      WORKERS: "4"           # 采集站对并发握手敏感，4 是实测平衡点
-      TIMEOUT: "20"
-      DROP_AFTER: "3"        # 连续失败 3 次才摘除
-      PROXY: "1"             # 站点 API 走 /cms/<key> 代理，翻好 t= 参数
-      MAX_ASSETS: "25"       # 全能档最多带几个扩展资源（jar/js/py）
-      MAX_JAR_SITES: "120"   # 扩展站点总数上限
     volumes:
       - ./data:/app/data
+    environment:
+      # 面板密码 / 写接口令牌。强烈建议填：openssl rand -hex 12
+      # 留空 = 不鉴权（内网自用可以，别暴露公网）
+      - TOKEN=${TOKEN:-}
+      # 写进配置的对外地址。一般留空（自动用你访问时的地址）
+      # 走反代或多网卡时再填，例如 http://你的设备地址:5680
+      - BASE_URL=${BASE_URL:-}
+      # 换端口（host 网络下直接占用宿主端口）
+      - PORT=${PORT:-5680}
+      - TZ=${TZ:-Asia/Shanghai}
+      # 每 N 小时自动重聚合；0 = 只手动
+      - INTERVAL=${INTERVAL:-6}
+      - WORKERS=${WORKERS:-4}
+      - TIMEOUT=${TIMEOUT:-20}
+      - DROP_AFTER=${DROP_AFTER:-3}
+      # 站点 API 走 /cms/ 代理，兼容性更好
+      - PROXY=${PROXY:-1}
+      - MAX_ASSETS=${MAX_ASSETS:-25}
+      - MAX_JAR_SITES=${MAX_JAR_SITES:-120}
+    restart: unless-stopped
