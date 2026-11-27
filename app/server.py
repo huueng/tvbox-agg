@@ -708,7 +708,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header(k, v)
         self.end_headers()
         if self.command != "HEAD":
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                # 浏览器刷新 / 电视切换频道时会直接断开，这不是错误，
+                # 不吞掉会在日志里刷一屏 traceback
+                return
 
     def _cookie_ok(self):
         raw = self.headers.get("Cookie") or ""
