@@ -11,7 +11,7 @@ services:
     network_mode: host
     environment:
       TZ: Asia/Shanghai
-      PORT: "5680"
+      PORT: "${PORT:-5680}"   # 换端口：PORT=5690 docker compose up -d
       # 写进配置里的对外地址。留空会自动用你访问时的地址；
       # 走反向代理或多网卡时再填，比如 http://你的设备地址:5680
       BASE_URL: "${BASE_URL:-}"
