@@ -1,0 +1,1821 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Copyright (c) 2026 TVBox Aggregator 作者. All rights reserved.
+# 源码可见 · 非开源：禁止商业使用与二次分发，详见仓库根目录 LICENSE。
+"""TVBox 聚合器 —— 常驻服务
+
+端点
+  GET  /                TVBox 单仓 JSON（客户端填这个）
+  GET  /tvbox.json      同上（显式别名）
+  GET  /libretv.json    LibreTV-SourceList v2（LibreTV 填这个）
+  GET  /report.md       体检报告（人看）
+  GET  /report.json     体检报告（机读）
+  GET  /status          状态面板（HTML），带手动刷新按钮
+  GET  /refresh?token=  触发一次重新聚合（异步，立刻返回）
+  GET  /healthz         健康检查
+
+特性
+  * 启动先读磁盘缓存，客户端零等待；随后后台自动聚合一次
+  * 后台按间隔定时聚合（默认 6 小时），失败 5 分钟后重试
+  * 聚合过程是串行单飞：正在跑时再触发会直接返回「已在运行」
+  * 配置类响应一律 no-store，客户端每次拿到的是最新一次结果
+
+用法
+  python server.py                          # 0.0.0.0:5680，间隔 6h
+  python server.py --bind 192.168.1.10       # 只监听局域网地址
+  python server.py --interval 2 --token xx  # 2 小时一次，刷新要 token
+  环境变量：PORT / BIND / INTERVAL / TOKEN / BASE_URL / OUT_DIR / SEEDS
+"""
+
+import argparse
+import collections
+import json
+import os
+import sys
+
+import state as ST
+import threading
+import concurrent.futures as cf
+import time
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import aggregate as A
+import live as L
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+CACHE = {
+    "tvbox": {"name": "初始化中", "sites": []},
+    "libretv": {"name": "初始化中", "version": 2, "sources": [], "liveSources": []},
+    "report": {},
+    "last_run": None,
+    "last_error": None,
+    "running": False,
+}
+_LOCK = threading.Lock()
+_CMS_CACHE = {}          # (key, query) -> (expire_ts, ctype, body)
+_CMS_TTL = 60
+_CMS_TTL_LIST = 300      # 分类列表缓存 5 分钟：客户端开机就拉它，不能让它等上游
+_CMS_MAX = 400
+_PARAM_LEARNED = {}      # key -> "t" | "type_id"（运行时学到的方言）
+
+CFG = {
+    "seeds": os.path.join(HERE, "sources.json"),
+    "out": os.path.join(HERE, "out"),
+    "state": os.path.join(HERE, "state.json"),
+    "workers": 3,
+    "timeout": 20,
+    "drop_after": 3,
+    "interval": 6 * 3600,
+    "token": "",
+    "base_url": "",
+    "proxy_base": "",      # 非空 → TVBox 输出走 /cms/<key> 透明代理
+}
+
+
+def log(msg):
+    print("[%s] %s" % (time.strftime("%H:%M:%S"), msg), flush=True)
+
+
+# ---------------------------------------------------------------- 聚合调度
+
+def load_cache():
+    """启动时先把上次结果读进内存，客户端立刻可用"""
+    for key, fn in (("tvbox", "tvbox.json"), ("report", "report.json"),
+                    ("all", "all.json"), ("ltv", "ltv.json"),
+                    ("direct", "tvbox-direct.json")):
+        p = os.path.join(CFG["out"], fn)
+        try:
+            with open(p, encoding="utf-8") as f:
+                CACHE[key] = json.load(f)
+            CACHE["last_run"] = time.strftime(
+                "%Y-%m-%d %H:%M:%S",
+                time.localtime(os.path.getmtime(p)))
+        except Exception:
+            pass
+
+
+def run_once():
+    """跑一次完整聚合；已有任务在跑时直接返回 False"""
+    with _LOCK:
+        if CACHE["running"]:
+            return False
+        CACHE["running"] = True
+    try:
+        try:
+            # 每轮都重读规则 —— 改了 rules.json 不用重启
+            A.apply_rules(A.load_rules(os.path.dirname(os.path.abspath(CFG["seeds"]))))
+        except Exception:
+            pass
+        log("开始聚合…")
+        res = A.run_pipeline(
+            seeds_path=CFG["seeds"], out_dir=CFG["out"], workers=CFG["workers"],
+            timeout=CFG["timeout"], state_path=CFG["state"],
+            drop_after=CFG["drop_after"], recheck=True, log=log,
+            proxy_base=CFG["proxy_base"] or None)
+        rep = res["report"]
+        CACHE.update(tvbox=res["tvbox"], libretv=res["libretv"],
+                     ltv=res.get("ltv") or res["libretv"], report=rep,
+                     full=res.get("full") or CACHE.get("full"),
+                     all=res.get("all") or CACHE.get("all"),
+                     direct=res.get("direct") or CACHE.get("direct"),
+                     last_run=time.strftime("%Y-%m-%d %H:%M:%S"),
+                     last_error=None)
+        threading.Thread(target=warm_dialects, args=(res,), daemon=True).start()
+        threading.Thread(target=lambda: JG.scan_all(
+            os.path.dirname(os.path.abspath(CFG["seeds"])), log=log),
+            daemon=True).start()
+        threading.Thread(target=lambda: A.speed_test_assets(
+            os.path.dirname(os.path.abspath(CFG["seeds"])), log=log),
+            daemon=True).start()
+        log("聚合完成：在线 %d / 暂留 %d / 摘除 %d；TVBox %d 站，LibreTV %d 源（%.1fs）" %
+            (rep["alive"], rep["grace"], rep["dead"], rep["tvbox_sites"],
+             rep["libretv_sources"], rep["elapsed_sec"]))
+        return True
+    except Exception as e:
+        CACHE["last_error"] = "%s: %s" % (type(e).__name__, e)
+        log("聚合失败：%s" % CACHE["last_error"])
+        # 光有异常名没法定位，把栈也打出来
+        try:
+            import traceback
+            log(traceback.format_exc())
+        except Exception:
+            pass
+        return False
+    finally:
+        CACHE["running"] = False
+
+
+def run_async(delay=0):
+    def _job():
+        if delay:
+            time.sleep(delay)
+        run_once()
+    t = threading.Thread(target=_job, name="aggregate", daemon=True)
+    t.start()
+    return t
+
+
+def _next_run_ts(stg, last_ts):
+    """下一次该什么时候跑
+
+    两种模式：daily = 每天固定点（如 03:30）；hours = 每 N 小时。
+    设置改了下一次循环就生效，不用重启。
+    """
+    now = time.time()
+    mode = (stg.get("interval_mode") or "hours").lower()
+    if mode == "daily":
+        raw = str(stg.get("daily_at") or "03:30")
+        try:
+            hh, mm = [int(x) for x in raw.split(":")[:2]]
+        except Exception:
+            hh, mm = 3, 30
+        lt = time.localtime(now)
+        target = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, hh, mm, 0, 0, 0, -1))
+        if target <= now:
+            target += 86400
+        return target
+    raw = stg.get("interval_hours")
+    hours = float(6 if raw in (None, "") else raw)
+    if hours <= 0:
+        return 0                       # 0 = 不自动跑
+    return max(last_ts + hours * 3600, now)
+
+
+def scheduler():
+    """每 30 秒看一眼：到点就聚合，设置改了立刻按新设置算下一次"""
+    settings_path = os.path.join(os.path.dirname(os.path.abspath(CFG["seeds"])),
+                                 "settings.json")
+    last = time.time()
+    nxt = _next_run_ts(A.load_settings(settings_path), last)
+    while True:
+        time.sleep(30)
+        try:
+            stg = A.load_settings(settings_path)
+        except Exception:
+            stg = {}
+        if not nxt:
+            nxt = _next_run_ts(stg, last)
+            if not nxt:
+                continue               # 关掉了自动聚合
+        if time.time() >= nxt:
+            mode = (stg.get("interval_mode") or "hours").lower()
+            log("定时聚合触发（%s）" % ("每天 " + str(stg.get("daily_at") or "03:30")
+                                    if mode == "daily"
+                                    else "每 %s 小时" % (stg.get("interval_hours") or 6)))
+            ok = run_once()
+            last = time.time()
+            nxt = _next_run_ts(stg, last)
+            if not ok:
+                log("本轮失败，5 分钟后重试")
+                time.sleep(300)
+                run_once()
+                last = time.time()
+                nxt = _next_run_ts(stg, last)
+        else:
+            # 设置被改过就重算，不用等到下一次
+            nxt2 = _next_run_ts(stg, last)
+            if nxt2 and abs(nxt2 - nxt) > 60:
+                nxt = nxt2
+
+
+# ---------------------------------------------------------------- 访问统计
+#
+# 一个线路「被拉了多少次」是判断它该不该换地址的唯一硬指标：
+# 次数高说明客户端真的在用它，扛不住就该换；次数长期为 0 说明客户端根本没选它。
+# 统计口径：/cms/<key> 的每次请求记到这个站点名下；配置文件按 profile 单独记。
+
+
+
+
+CMS_LOG = collections.deque(maxlen=300)
+CFG_SYNC_LOCK = threading.Lock()     # 同一时间只允许一条线路在解析
+# 直播索引的实现搬到了 live_api.py
+import jargate as JG
+import live_api as LA                   # noqa: E402
+
+
+def _data_dir0():
+    return os.path.dirname(os.path.abspath(CFG["seeds"]))
+
+
+def live_doc(force=False, log=print):
+    d = _data_dir0()
+    stg = A.load_settings(os.path.join(d, "settings.json"))
+    return LA.doc(d, force=force, log=log, settings=stg)
+
+
+def _live_bg():
+    d = _data_dir0()
+    stg = A.load_settings(os.path.join(d, "settings.json"))
+    LA.bg(d, settings=stg)
+
+
+def warm_dialects(res, log=None):
+    """聚合完就把各站分类列表拉一遍塞进缓存
+
+    客户端开机第一件事就是拉 ac=list，而我们这层代理要等上游（个别站 30 秒以上），
+    客户端超时就表现为「站点没分类、影视墙空白」。预热后客户端拿到的是命中缓存，
+    几十毫秒就返回。
+    """
+    sites = (res.get("tvbox") or {}).get("sites") or []
+    def one(item):
+        key = item.get("key")
+        if not key:
+            return
+        try:
+            cms_fetch(key, [("ac", "list"), ("pg", "1")])
+        except Exception:
+            pass
+    try:
+        with cf.ThreadPoolExecutor(max_workers=3) as ex:
+            list(ex.map(one, sites))
+    except Exception:
+        pass
+
+
+# 访问统计的实现搬到了 access.py，这里保留同名别名，调用点不用改
+import access as AC                     # noqa: E402
+
+access_hit = AC.hit
+access_summary = AC.summary
+access_today = AC.today
+access_load = AC.load
+access_flush = AC.flush
+
+
+import hashlib
+
+AUTH_PATH = None
+
+
+def _h(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def auth_load():
+    try:
+        with open(AUTH_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def auth_password_ok(pw):
+    """校验密码：优先用 data/auth.json 里改过的，否则用环境变量 TOKEN"""
+    doc = auth_load()
+    if doc.get("hash"):
+        return _h(doc.get("salt", "") + pw) == doc["hash"]
+    return bool(CFG["token"]) and pw == CFG["token"]
+
+
+def auth_ready():
+    """有没有设置过密码（没设置就完全不拦，方便内网裸跑）"""
+    doc = auth_load()
+    return bool(doc.get("hash") or CFG["token"])
+
+
+def auth_set_password(pw):
+    salt = os.urandom(8).hex()
+    doc = {"salt": salt, "hash": _h(salt + pw),
+           "changed": time.strftime("%Y-%m-%d %H:%M:%S")}
+    ST.save_file(AUTH_PATH, doc)
+    return doc
+
+
+def auth_cookie_value():
+    """当前密码对应的 Cookie 值；改密码后自动变"""
+    doc = auth_load()
+    base = doc.get("hash") or _h(CFG["token"] or "")
+    return _h(base + "cookie")[:32]
+
+
+def auth_login_html(err="", prefix=""):
+    return """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>登录 · TVBox 聚合器</title><style>
+body{font:14px/1.6 system-ui,"Microsoft YaHei",sans-serif;background:#f6f7f9;
+margin:0;display:flex;align-items:center;justify-content:center;height:100vh}
+.box{background:#fff;border:1px solid #e4e6eb;border-radius:12px;padding:28px 26px;
+width:320px;box-shadow:0 2px 12px rgba(0,0,0,.06)}
+h1{font-size:17px;margin:0 0 4px;text-align:center}
+p{color:#656d76;font-size:12px;text-align:center;margin:0 0 18px}
+input{width:100%%;box-sizing:border-box;font:inherit;padding:9px 11px;border:1px solid #d0d7de;
+border-radius:8px;margin-bottom:12px}
+button{width:100%%;font:inherit;padding:9px;border:0;border-radius:8px;background:#1f883d;
+color:#fff;cursor:pointer}button:hover{background:#1a7f37}
+.err{color:#cf222e;font-size:12px;text-align:center;margin-bottom:10px}
+</style></head><body><form class="box" method="post" action="login">
+<h1>TVBox 聚合器</h1><p>请输入管理密码</p>
+%s<input type="password" name="pw" placeholder="管理密码" autofocus autocomplete="current-password">
+<button type="submit">登 录</button>%s</form></body></html>""" % (
+        ('<div class="err">%s</div>' % err) if err else "",
+        # 从没在面板改过密码时，密码就是 docker-compose 里的 TOKEN，这里提示一下
+        ('' if auth_load().get("hash") else
+         '<p style="margin:12px 0 0;font-size:11px">还没设置过密码：当前使用 '
+         '<code>docker-compose.yml</code> 里的 <code>TOKEN</code> 登录，'
+         '登录后可在「设置」里改。</p>'))
+
+# ---------------------------------------------------------------- CMS 代理
+
+def _live_state(data_dir):
+    p = os.path.join(data_dir, "live_state.json")
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _live_tick(data_dir, force_big=False, force_small=False, force_screen=False,
+               log=print):
+    """直播的大聚合 / 小聚合 / 备选初筛
+
+    大聚合：重新展开优选源的 TXT/M3U（频道增减），3 天一次
+    小聚合：用上次的频道清单只测线路，1 天一次
+    备选初筛：只解析频道数不测活，2 天一次，决定要不要顶进优选
+    """
+    import live as L
+    stg = A.load_settings(os.path.join(data_dir, "settings.json"))
+    n = int(stg.get("live_active_n") or 10)
+    auto = bool(int(stg.get("live_auto_promote") or 0))
+    big_d = int(stg.get("live_big_days") or 3)
+    small_d = int(stg.get("live_small_days") or 1)
+    bench_d = int(stg.get("live_bench_days") or 2)
+    now = time.time()
+    st = _live_state(data_dir)
+
+    doc = L.load_lives(data_dir)
+    items = doc.get("items") or []
+    if not items:
+        return
+    L.apply_tiers(items, n, auto)
+    L.save_lives(data_dir, doc)
+
+    def due(k, days):
+        return now - float(st.get(k) or 0) >= days * 86400
+
+    # 墓碑复检：到期的试一次，通了就回备选
+    try:
+        revive = L.tomb_check(data_dir, log=log,
+                              days=int(stg.get("live_tomb_days") or 15),
+                              max_fail=int(stg.get("live_tomb_max_fail") or 5))
+        for u, nm in revive or []:
+            L.revive_source(data_dir, u, nm)
+        if revive:
+            st["last_tomb"] = now
+    except Exception as e:                        # noqa: BLE001
+        log("  墓碑复检失败：%s" % e)
+    # 新进来的源（复活 / 删除后重新加）各解析一次
+    try:
+        if L.parse_pending(data_dir, log=log):
+            doc_r = L.load_lives(data_dir)
+            L.apply_tiers(doc_r.get("items") or [], n, auto)
+            L.save_lives(data_dir, doc_r)
+    except Exception as e:                        # noqa: BLE001
+        log("  待解析源处理失败：%s" % e)
+
+    did = []
+    if force_big or due("last_big", big_d):
+        doc2 = L.load_lives(data_dir)
+        L.big_refresh(data_dir, doc2.get("items") or [], active_n=n, log=log,
+                      max_test=int(stg.get("live_max_test") or 1500))
+        st["last_big"] = st["last_small"] = now
+        did.append("大聚合")
+    elif force_small or due("last_small", small_d):
+        L.small_test(data_dir, log=log,
+                     max_test=int(stg.get("live_max_test") or 1500))
+        st["last_small"] = now
+        did.append("小聚合")
+
+    if force_screen or due("last_bench", bench_d):
+        doc3 = L.load_lives(data_dir)
+        L.screen_bench(data_dir, doc3.get("items") or [], log=log)
+        doc3 = L.load_lives(data_dir)
+        L.apply_tiers(doc3.get("items") or [], n, auto)
+        L.save_lives(data_dir, doc3)
+        st["last_bench"] = now
+        did.append("备选初筛")
+
+    st["checked"] = now
+    ST.save_file(os.path.join(data_dir, "live_state.json"), st)
+    if did:
+        log("  直播调度：%s（优选 %d 个）" % ("+".join(did), n))
+
+
+def _mirror_list():
+    try:
+        import discover as D
+        return list(D.MIRRORS)
+    except Exception:
+        return []
+
+
+def site_table():
+    """key -> (上游 api, 分类参数名)"""
+    t = {}
+    for s in (CACHE.get("report") or {}).get("sources", []):
+        k = s.get("key")
+        if k and s.get("api"):
+            t[k] = (s["api"], s.get("param"))
+    return t
+
+
+def _cms_count(body):
+    """数一下响应里有几条内容（JSON 看 list，XML 看 <video>）"""
+    try:
+        head = body.lstrip()[:1]
+        if head == b"<":
+            return body.count(b"<video>")
+        d = A.loads_loose(body.decode("utf-8", "replace"))
+        return len((d or {}).get("list") or []) if isinstance(d, dict) else 0
+    except Exception:
+        return 0
+
+
+def cms_fetch(key, query_pairs):
+    """透明代理：把客户端发来的参数翻成上游认的名字，再原样返回
+
+    关键点：采集站多数不认 t=，收到就返回空列表 → TVBox 点分类空白。
+    1) 已知方言（体检时探到的）直接用
+    2) 未知方言：先按 t 发，空了就换 type_id 再发一次，谁有数据记住谁
+    这样即使体检时 ac=list 超时漏探，第一次点分类也能自动纠正。
+    """
+    info = site_table().get(key)
+    if not info:
+        return None
+    api, param = info
+    param = param or _PARAM_LEARNED.get(key)
+
+    def build(p):
+        pairs = []
+        for k, v in query_pairs:
+            if k == "t" and p == "type_id":
+                k = "type_id"
+            pairs.append((k, v))
+        return pairs
+
+    def call(pairs):
+        url = api + ("&" if "?" in api else "?") + urllib.parse.urlencode(pairs)
+        try:
+            return A.fetch(url, timeout=30, done=None, retries=1)
+        except Exception:
+            return None
+
+    pairs = build(param)
+    cache_key = (key, tuple(sorted(pairs)))
+    now = time.time()
+    hit = _CMS_CACHE.get(cache_key)
+    if hit and hit[0] > now:
+        return hit[1], hit[2], True
+
+    body = call(pairs)
+    if body is not None and not _cms_count(body) and any(k == "t" or k == "type_id"
+                                                         for k, _ in pairs):
+        alt = "type_id" if param != "type_id" else "t"
+        body2 = call(build(alt))
+        if body2 is not None and _cms_count(body2) > 0:
+            body = body2
+            _PARAM_LEARNED[key] = alt
+            log("  学到方言：%s 认 %s=" % (key, alt))
+    if body is None:
+        return None, "抓取失败", False
+
+    head = body.lstrip()[:1]
+    ctype = ("application/xml; charset=utf-8" if head == b"<"
+             else "application/json; charset=utf-8")
+    if len(_CMS_CACHE) > _CMS_MAX:
+        _CMS_CACHE.clear()
+    ttl = _CMS_TTL_LIST if any(k == "ac" and v == "list" for k, v in pairs) \
+        else _CMS_TTL
+    _CMS_CACHE[cache_key] = (now + ttl, ctype, body)
+    return ctype, body, False
+
+
+# ---------------------------------------------------------------- HTTP
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "TVBoxAgg/0.9"
+    protocol_version = "HTTP/1.1"
+
+    # ---- 工具
+    def _send(self, code, body, ctype="application/json; charset=utf-8",
+              extra=None):
+        if isinstance(body, (dict, list)):
+            body = json.dumps(body, ensure_ascii=False, indent=1)
+        if isinstance(body, str):
+            body = body.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store, must-revalidate")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _cookie_ok(self):
+        raw = self.headers.get("Cookie") or ""
+        want = auth_cookie_value()
+        for part in raw.split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "agg_auth" and v and v == want:
+                return True
+        return False
+
+    def _auth_ok(self, q, allow_query=False):
+        """通过条件：已登录 Cookie；或者（仅 /refresh）带正确 ?token=
+
+        ?token= 只留给 cron 这类机器调用，不能拿来读管理接口——
+        否则改了密码，compose 里那串旧 TOKEN 依然是个后门。
+        """
+        if not auth_ready():
+            return True
+        if self._cookie_ok():
+            return True
+        if allow_query and q.get("token", [""])[0] and q["token"][0] == CFG["token"]:
+            return True
+        return self.headers.get("Authorization") == "Bearer " + CFG["token"]
+
+    def _devtest(self, kind, idx=1):
+        """只放一个指定类型的站点，用来验证某个客户端到底支不支持这类源
+
+        kind=jar / js / py / cms。客户端拿这个配置时只会看到那一个站点，
+        能不能出内容一目了然。
+        """
+        docs = [CACHE.get("full") or {}, CACHE.get("all") or {}, CACHE.get("tvbox") or {}]
+        found = []
+        for doc in docs:
+            for s0 in doc.get("sites") or []:
+                if s0.get("type") != 3:
+                    continue
+                api = str(s0.get("api") or "")
+                has_jar = bool(s0.get("jar"))
+                ok = ((kind == "jar" and has_jar) or
+                      (kind == "js" and not has_jar and api.endswith(".js")) or
+                      (kind == "py" and not has_jar and api.endswith(".py")))
+                if ok and s0 not in found:
+                    found.append(s0)
+        pick = found[max(0, min(idx - 1, len(found) - 1))] if found else None
+        if kind == "cms" or not pick:
+            for s0 in (CACHE.get("tvbox") or {}).get("sites") or []:
+                if s0.get("type") in (0, 1):
+                    pick = dict(s0)
+                    break
+            if kind != "cms" and pick:
+                pick["name"] = "（没找到 %s 类型，退回 CMS）%s" % (kind, pick.get("name"))
+        if not pick:
+            return {"name": "空", "sites": [], "lives": [], "parses": [], "flags": []}
+        out = {"name": "devtest-%s" % kind, "sites": [dict(pick)],
+               "lives": [], "parses": [], "flags": []}
+        return out
+
+    def _client_ip(self):
+        fwd = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        if fwd:
+            return fwd
+        real = (self.headers.get("X-Real-IP") or "").strip()
+        if real:
+            return real
+        try:
+            return self.client_address[0]
+        except Exception:
+            return ""
+
+    def _req_base(self):
+        """这次请求是从哪个地址打进来的
+
+        用反向代理（比如 https://tvbox.xxx.io:812/）访问时，配置里的站点 api
+        必须跟着变成同样的 https 地址，否则 Android 会按「明文流量」直接拦掉：
+        表现就是能加载站点列表，但每个站点没有分类、没有影视墙、搜索无结果。
+        """
+        proto = (self.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip()
+        host = (self.headers.get("X-Forwarded-Host") or "").split(",")[0].strip()
+        if not host:
+            host = self.headers.get("Host") or ""
+        if not proto:
+            proto = "https" if (self.headers.get("X-Forwarded-Ssl") or
+                                self.headers.get("X-Forwarded-Scheme") == "https") else ""
+        if not proto:
+            # 代理没透传协议时靠 Host 猜：域名走 https，内网 IP 走 http。
+            # 猜错会有代价（https 站点里请求 http 会被 Android 拦），所以宁可保守。
+            hostname = host.split(":")[0]
+            is_ip = bool(hostname) and hostname.replace(".", "").isdigit()
+            proto = "http" if (is_ip or hostname.endswith(".local")) else "https"
+        return ("%s://%s" % (proto, host)).rstrip("/") if host else ""
+
+    def _cfg_text(self, key):
+        """配置里的站点地址跟随访问地址改写（只改 <base>/cms/ 前缀）"""
+        doc = CACHE.get(key) or {}
+        text = json.dumps(doc, ensure_ascii=False, indent=1)
+        cfg_base = (CFG["proxy_base"] or CFG["base_url"] or "").rstrip("/")
+        req_base = self._req_base()
+        if cfg_base and req_base and req_base != cfg_base:
+            text = text.replace(cfg_base + "/cms/", req_base + "/cms/")
+        return text
+
+    def _base(self):
+        if CFG["base_url"]:
+            return CFG["base_url"].rstrip("/")
+        host = self.headers.get("Host") or ("%s:%s" % self.server.server_address)
+        return "http://" + host
+
+    def _loc(self, target):
+        """跳转用相对地址
+
+        反代可能是「前端 / → 后端 /status」这种（浏览器看不到 /status），
+        也可能是「保留 /status」。发绝对地址 `Location: /status` 在第一种下会变成
+        /status/status。相对地址由浏览器按它自己看到的 URL 解析，两种都对。
+        """
+        if target in ("/login", "/logout"):
+            return "login" if target == "/login" else "login"
+        if target == "/status":
+            return "./"
+        return target
+
+    # ---- 路由
+    # 反向代理如果配了「保留 /status 前缀」，我们收到的就是 /status/login 这种。
+    # 这里把前缀剥掉再路由，跳转时再补回去 —— 否则面板在反代下面完全点不动。
+    def _split_path(self):
+        u = urllib.parse.urlsplit(self.path)
+        raw = (u.path or "/")
+        prefix = ""
+        for pre in ("/status", "/tvbox"):
+            # 只有「前缀 + 后面还有内容」才剥；单独的 /status 就是面板本身
+            if raw.startswith(pre + "/"):
+                prefix = pre
+                rest = raw[len(pre):].rstrip("/")
+                # /status/（反代把前端根拼成 base + "/"）也要当面板，不能归一成 "/"
+                raw = rest or pre
+                break
+        return (raw.rstrip("/") or "/"), urllib.parse.parse_qs(u.query), prefix
+
+    def do_GET(self):
+        path, q, prefix = self._split_path()
+        self._prefix = prefix
+
+        if path in ("/", "/tvbox.json", "/index.json", "/tvbox"):
+            _txt = self._cfg_text("tvbox")
+            access_hit("cfg:tvbox", len(_txt.encode("utf-8")),
+                       self.headers.get("User-Agent", "")[:36], self._client_ip())
+            return self._send(200, _txt)
+        if path in ("/tvbox-full.json", "/full.json", "/tvbox-full"):
+            if not CACHE.get("full"):
+                return self._send(404, {"error": "全量 profile 还没生成",
+                                        "hint": "跑 discover.py --collect-jars 后重新聚合"})
+            access_hit("cfg:full", 0, self.headers.get("User-Agent", "")[:36], self._client_ip())
+            return self._send(200, self._cfg_text("full"))
+        if path in ("/tvbox-all.json", "/all.json", "/tvbox-all"):
+            if not CACHE.get("all"):
+                return self._send(404, {"error": "全能 profile 还没生成",
+                                        "hint": "跑 discover.py --collect-jars 后重新聚合"})
+            _txt2 = self._cfg_text("all")
+            access_hit("cfg:all", len(_txt2.encode("utf-8")),
+                       self.headers.get("User-Agent", "")[:36], self._client_ip())
+            return self._send(200, _txt2)
+        if path in ("/tvbox-direct.json", "/direct.json"):
+            if not CACHE.get("direct"):
+                return self._send(404, {"error": "直连版还没生成"})
+            return self._send(200, self._cfg_text("direct"))
+        if path in ("/libretv.json", "/libretv", "/ltv.json", "/ltv"):
+            access_hit("cfg:ltv", 0, self.headers.get("User-Agent", "")[:36], self._client_ip())
+            return self._send(200, CACHE.get("ltv") or CACHE.get("libretv") or {})
+        if path == "/report.json":
+            return self._send(200, CACHE["report"])
+        if path == "/report.md":
+            p = os.path.join(CFG["out"], "report.md")
+            try:
+                with open(p, encoding="utf-8") as f:
+                    return self._send(200, f.read(),
+                                      "text/markdown; charset=utf-8")
+            except Exception:
+                return self._send(404, {"error": "还没有报告"})
+        if path == "/login":
+            if self._auth_ok(q):
+                return self._send(302, "", "text/html; charset=utf-8",
+                                  {"Location": self._loc("/status")})
+            return self._send(200, auth_login_html(prefix=self._prefix),
+                              "text/html; charset=utf-8")
+        if path == "/logout":
+            return self._send(302, "", "text/html; charset=utf-8",
+                              {"Location": self._loc("/login"),
+                               "Set-Cookie": "agg_auth=; Path=/; Max-Age=0"})
+        if (path == "/status" or path.startswith("/api/")) and not self._auth_ok(q):
+            if path.startswith("/api/"):
+                return self._send(401, {"error": "需要登录", "login": "/login"})
+            return self._send(302, "", "text/html; charset=utf-8",
+                              {"Location": self._loc("/login")})
+        if path.startswith("/live/"):
+            try:
+                doc = live_doc(log=lambda *a: None)
+            except Exception:
+                doc = LA.CACHE.get("doc") or {}
+            if not doc:
+                return self._send(503, {"error": "直播测速正在后台进行，稍后再试"})
+            stg = A.load_settings(os.path.join(
+                os.path.dirname(os.path.abspath(CFG["seeds"])), "settings.json"))
+            per = int(stg.get("live_lines_per") or 5)
+            drop_bad = bool(int(stg.get("live_drop_seg_bad", 1)))
+            if path in ("/live/cctv.m3u", "/live/cctv.m3u8"):
+                access_hit("live:main", 0, self.headers.get("User-Agent", "")[:36],
+                           self._client_ip())
+                return self._send(200, L.to_m3u(doc, "main", per, drop_bad),
+                                  "audio/x-mpegurl; charset=utf-8")
+            if path in ("/live/local.m3u", "/live/local.m3u8",
+                        "/live/other.m3u", "/live/other.m3u8"):
+                access_hit("live:local", 0, self.headers.get("User-Agent", "")[:36],
+                           self._client_ip())
+                # 地方台是副接口，每台给 2 条就够（多了客户端翻起来累）
+                return self._send(200, L.to_m3u(doc, "local", 2, drop_bad),
+                                  "audio/x-mpegurl; charset=utf-8")
+            if path == "/live/cctv.json":
+                return self._send(200, L.to_tvbox_lives(doc, "main", per, drop_bad))
+            if path in ("/live/local.json", "/live/other.json"):
+                return self._send(200, L.to_tvbox_lives(doc, "local", 2, drop_bad))
+            if path == "/live/summary":
+                return self._send(200, {
+                    "total": doc.get("total"), "ok": doc.get("ok"),
+                    "cctv": len(doc.get("cctv") or {}),
+                    "sat": len(doc.get("sat") or {}),
+                    "local": len(doc.get("local") or {}),
+                    "dropped": len(doc.get("other") or {}),
+                    "cost": doc.get("cost"),
+                    "ts": doc.get("ts")})
+        if path == "/api/access":
+            return self._send(200, access_summary())
+        if path == "/api/overview":
+            return self._send(200, self._overview())
+        if path == "/devtest":
+            kind = (q.get("kind") or ["jar"])[0]
+            idx = int((q.get("n") or ["1"])[0])
+            return self._send(200, self._devtest(kind, idx))
+        if path == "/api/cmslog":
+            return self._send(200, {"rows": list(CMS_LOG)})
+        if path == "/api/history":
+            hp = os.path.join(os.path.dirname(os.path.abspath(CFG["seeds"])),
+                              "history.jsonl")
+            out = []
+            try:
+                with open(hp, encoding="utf-8") as f:
+                    for line in f.readlines()[-200:]:
+                        try:
+                            out.append(json.loads(line))
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            return self._send(200, {"rows": out})
+        if path == "/status":
+            return self._send(200, self._status_html(), "text/html; charset=utf-8")
+        if path == "/healthz":
+            return self._send(200, {"ok": True, "running": CACHE["running"],
+                                    "last_run": CACHE["last_run"]})
+        if path == "/refresh":
+            if not self._auth_ok(q, allow_query=True):
+                return self._send(401, {"error": "token 不对"})
+            if CACHE["running"]:
+                return self._send(202, {"started": False, "reason": "已在聚合中"})
+            run_async()
+            return self._send(202, {"started": True})
+        if path.startswith("/cms/"):
+            key = path[5:]
+            pairs = urllib.parse.parse_qsl(
+                urllib.parse.urlsplit(self.path).query, keep_blank_values=True)
+            res = cms_fetch(key, pairs)
+            if res is None:
+                return self._send(404, {"error": "未知站点 key", "key": key})
+            ctype, payload, cached = res
+            try:
+                CMS_LOG.append({
+                    "t": time.strftime("%H:%M:%S"), "key": key,
+                    "q": urllib.parse.urlsplit(self.path).query[:80],
+                    "cache": bool(cached),
+                    "size": len(payload) if not isinstance(payload, str) else 0,
+                    "ua": (self.headers.get("User-Agent") or "")[:28],
+                    "err": payload if isinstance(payload, str) else ""})
+            except Exception:
+                pass
+            if isinstance(payload, str):
+                return self._send(502, {"error": payload, "key": key})
+            return self._send(200, payload, ctype,
+                              {"X-CMS-Cache": "hit" if cached else "miss"})
+        return self._send(404, {"error": "not found", "path": path,
+                                "hint": "/ /tvbox.json /libretv.json /status /refresh /cms/<key>"})
+
+    def do_HEAD(self):
+        return self.do_GET()
+
+    def do_POST(self):
+        path, _q2, prefix = self._split_path()
+        self._prefix = prefix
+        u = urllib.parse.urlsplit(self.path)
+        if not path.startswith("/api/") and path != "/login":
+            return self._send(404, {"error": "only /api/* accepts POST"})
+        q = urllib.parse.parse_qs(u.query)
+        n = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(n) if n else b""
+
+        if path == "/login":
+            form = urllib.parse.parse_qs(raw.decode("utf-8", "replace"))
+            pw = (form.get("pw") or [""])[0]
+            if auth_password_ok(pw):
+                access_hit("login", 0, self.headers.get("User-Agent", "")[:36],
+                           self._client_ip())
+                return self._send(302, "", "text/html; charset=utf-8",
+                                  {"Location": self._loc("/status"),
+                                   "Set-Cookie": "agg_auth=%s; Path=/; HttpOnly; "
+                                                 "SameSite=Lax; Max-Age=604800"
+                                                 % auth_cookie_value()})
+            return self._send(200, auth_login_html("密码不对", self._prefix),
+                              "text/html; charset=utf-8")
+
+        if not self._auth_ok(q):
+            return self._send(401, {"error": "需要登录", "login": "/login"})
+        try:
+            body = json.loads(raw.decode("utf-8") or "{}")
+        except Exception:
+            return self._send(400, {"error": "body 不是合法 JSON"})
+        try:
+            if path == "/api/source/add":
+                return self._send(200, self._source_add(body))
+            if path == "/api/source/remove":
+                return self._send(200, self._source_remove(body))
+            if path == "/api/override":
+                return self._send(200, self._override(body))
+            if path == "/api/config/scan-bench":
+                def _scan_bench():
+                    try:
+                        d = self._data_dir()
+                        _act, bench = A.load_config_urls(d)
+                        log("开始解析 %d 个备选配置接口（只统计，不并池）" % len(bench))
+                        for u in sorted(bench):
+                            try:
+                                A.sync_config_sources(d, CFG["seeds"], force=True,
+                                                      only=u, log=print)
+                            except Exception as e:
+                                log("  %s 解析失败：%s" % (u[-40:], e))
+                        log("备选配置接口解析完成")
+                    except Exception as e:
+                        log("备选解析失败：%s" % e)
+                threading.Thread(target=_scan_bench, daemon=True).start()
+                return self._send(200, {"ok": True, "started": True})
+            if path == "/api/purge/rebuild":
+                def _rebuild():
+                    try:
+                        d = self._data_dir()
+                        rm = A.purge_unselected(d)
+                        log("清理未启用配置的站点：扩展 %d / 采集 %d" % (rm["jars"], rm["sources"]))
+                        _act, _b = A.load_config_urls(d)
+                        for u in sorted(_act):
+                            try:
+                                A.sync_config_sources(d, CFG["seeds"], force=True,
+                                                      only=u, log=print)
+                            except Exception as e:
+                                log("  %s 重建失败：%s" % (u[-40:], e))
+                        log("站点池重建完成，开始聚合")
+                        run_once()
+                    except Exception as e:
+                        log("重建失败：%s" % e)
+                threading.Thread(target=_rebuild, daemon=True).start()
+                return self._send(200, {"ok": True, "started": True})
+            if path == "/api/mirrors":
+                import discover as D
+                if body.get("mirrors") is None:
+                    return self._send(200, {"mirrors": D.MIRRORS,
+                                            "default": D.MIRROR_DEFAULT})
+                items = [str(x).strip() for x in (body.get("mirrors") or [])
+                         if str(x).strip()]
+                D.set_mirrors(items)
+                ST.save_file(os.path.join(self._data_dir(), "mirrors.json"),
+                             {"mirrors": D.MIRRORS})
+                return self._send(200, {"ok": True, "mirrors": D.MIRRORS})
+            if path == "/api/rules":
+                return self._send(200, {"rules": A.RULES,
+                                        "defaults": A.RULES_DEFAULT})
+            if path == "/api/site/pin":
+                name = str(body.get("name") or "").strip()
+                if not name:
+                    return self._send(400, {"ok": False, "error": "缺少站点名"})
+                d = self._data_dir()
+                blk = ST.load(d, "block.json", {"names": [], "assets": [], "pin": []})
+                pins = [x for x in (blk.get("pin") or []) if x]
+                if body.get("pinned", True):
+                    if name not in pins:
+                        pins.append(name)
+                else:
+                    pins = [x for x in pins if x != name]
+                blk["pin"] = pins
+                ST.save(d, "block.json", blk)
+                return self._send(200, {"ok": True, "pin": pins})
+            if path == "/api/site/block":
+                names_in = [str(x).strip() for x in (body.get("names") or []) if str(x).strip()]
+                name = str(body.get("name") or "").strip()
+                if names_in:
+                    d = self._data_dir()
+                    blk = ST.load(d, "block.json", {"names": [], "assets": [], "pin": []})
+                    names = [x for x in (blk.get("names") or []) if x]
+                    low = {x.lower() for x in names}
+                    for n in names_in:
+                        if n.lower() not in low:
+                            names.append(n)
+                            low.add(n.lower())
+                    blk["names"] = names
+                    ST.save(d, "block.json", blk)
+                    return self._send(200, {"ok": True, "added": len(names_in), "block": blk})
+                if not name:
+                    return self._send(400, {"ok": False, "error": "缺少站点名"})
+                d = self._data_dir()
+                blk = ST.load(d, "block.json", {"names": [], "assets": []})
+                names = [x for x in (blk.get("names") or []) if x]
+                low = [x.lower() for x in names]
+                if body.get("blocked", True):
+                    if name.lower() not in low:
+                        names.append(name)
+                else:
+                    names = [x for x in names if x.lower() != name.lower()]
+                blk["names"] = names
+                ST.save(d, "block.json", blk)
+                return self._send(200, {"ok": True, "block": blk})
+            if path == "/api/block":
+                return self._send(200, self._block(body))
+            if path == "/api/probe":
+                return self._send(200, self._probe_one(body))
+            if path == "/api/password":
+                old = str(body.get("old") or "")
+                new = str(body.get("new") or "")
+                if not auth_password_ok(old):
+                    return self._send(200, {"ok": False, "error": "原密码不对"})
+                if len(new) < 6:
+                    return self._send(200, {"ok": False, "error": "新密码至少 6 位"})
+                auth_set_password(new)
+                access_flush(force=True)
+                return self._send(200, {"ok": True,
+                                        "Set-Cookie_hint": "重新登录后生效"})
+            if path == "/api/jargate/scan":
+                def _bg3():
+                    try:
+                        JG.scan_all(self._data_dir(), force=True, log=print)
+                    except Exception as e:
+                        print("jar 扫描失败：%s" % e)
+                threading.Thread(target=_bg3, daemon=True).start()
+                return self._send(200, {"ok": True, "started": True})
+            if path == "/api/asset/speed":
+                _urls = [str(u) for u in (body.get("urls") or []) if u]
+                _names = {str(x) for x in (body.get("names") or []) if x}
+                if _names:
+                    _doc = ST.load(self._data_dir(), "jars.json", {})
+                    _urls = [s0.get("jar") for s0 in (_doc.get("sites") or [])
+                             if s0.get("name") in _names and s0.get("jar")]
+                    _urls = list(dict.fromkeys(_urls))
+                def _bg2():
+                    try:
+                        A.speed_test_assets(self._data_dir(), force=True,
+                                            urls=_urls or None)
+                    except Exception as e:
+                        print("资源测速失败：%s" % e)
+                threading.Thread(target=_bg2, daemon=True).start()
+                return self._send(200, {"ok": True, "started": True})
+            if path in ("/api/live/big", "/api/live/small", "/api/live/both",
+                        "/api/live/screen"):
+                _d = self._data_dir()
+                _mode = path.rsplit("/", 1)[-1]
+
+                def _run():
+                    try:
+                        _live_tick(_d,
+                                   force_big=_mode in ("big", "both"),
+                                   force_small=_mode in ("small", "both"),
+                                   force_screen=_mode == "screen",
+                                   log=log)
+                    except Exception as e:            # noqa: BLE001
+                        log("直播调度失败：%s" % e)
+                threading.Thread(target=_run, daemon=True).start()
+                return self._send(200, {"ok": True, "started": _mode})
+            if path == "/api/live/parse":
+                _u = str(body.get("url") or "").strip()
+                if not _u:
+                    return self._send(400, {"error": "缺少 url"})
+
+                def _one():
+                    try:
+                        import live as L
+                        d = self._data_dir()
+                        with open(os.path.join(d, "lives.json"), encoding="utf-8") as f:
+                            items = (json.load(f).get("items") or [])
+                        one = [x for x in items if (x.get("url") or "").strip() == _u]
+                        if not one:
+                            log("直播源不存在：%s" % _u[:60])
+                            return
+                        ch, stats = L.expand_lives_stats(one, max_sources=0,
+                                                         timeout=15, log=log)
+                        L._save_source_stats(d, stats)
+                        r = stats.get(_u) or {}
+                        log("直播源解析完成 %s：%d 频道（央视 %d / 卫视 %d）%s"
+                            % ((one[0].get("name") or "")[:20], r.get("n", 0),
+                               r.get("cctv", 0), r.get("sat", 0),
+                               ("｜" + r["err"]) if r.get("err") else ""))
+                    except Exception as e:            # noqa: BLE001
+                        log("直播源解析失败：%s" % e)
+                threading.Thread(target=_one, daemon=True).start()
+                return self._send(200, {"ok": True, "started": True})
+            if path == "/api/live/block":
+                _u = str(body.get("url") or "").strip()
+                _on = 1 if body.get("on") else 0
+                d = self._data_dir()
+                p2 = os.path.join(d, "lives.json")
+                try:
+                    with open(p2, encoding="utf-8") as f:
+                        doc = json.load(f)
+                    nm = ""
+                    for it in doc.get("items") or []:
+                        if (it.get("url") or "").strip() == _u:
+                            it["blocked"] = _on
+                            nm = it.get("name") or ""
+                    ST.save_file(p2, doc)
+                    import live as _L
+                    if _on:
+                        _L.tomb_add(self._data_dir(), _u, nm, "blocked")
+                    else:
+                        _L.tomb_drop(self._data_dir(), _u)
+                    return self._send(200, {"ok": True, "blocked": _on})
+                except Exception as e:                # noqa: BLE001
+                    return self._send(500, {"error": str(e)})
+            if path == "/api/live/delete":
+                _u = str(body.get("url") or "").strip()
+                d = self._data_dir()
+                p2 = os.path.join(d, "lives.json")
+                try:
+                    with open(p2, encoding="utf-8") as f:
+                        doc = json.load(f)
+                    before = len(doc.get("items") or [])
+                    _nm = ""
+                    for x in doc.get("items") or []:
+                        if (x.get("url") or "").strip() == _u:
+                            _nm = x.get("name") or ""
+                    doc["items"] = [x for x in (doc.get("items") or [])
+                                    if (x.get("url") or "").strip() != _u]
+                    ST.save_file(p2, doc)
+                    import live as _L
+                    _L.tomb_add(self._data_dir(), _u, _nm, "deleted")
+                    return self._send(200, {"ok": True,
+                                            "removed": before - len(doc["items"])})
+                except Exception as e:                # noqa: BLE001
+                    return self._send(500, {"error": str(e)})
+            if path == "/api/live/refresh":
+                def _bg():
+                    try:
+                        live_doc(force=True, log=print)
+                    except Exception as e:
+                        print("直播测速失败：%s" % e)
+                threading.Thread(target=_bg, daemon=True).start()
+                return self._send(200, {"ok": True, "started": True})
+            if path == "/api/settings":
+                return self._send(200, self._settings(body))
+            if path == "/api/config/add":
+                return self._send(200, self._config_add(body))
+            if path == "/api/config/sync":
+                return self._send(200, self._config_sync(body))
+            if path == "/api/config/promote":
+                return self._send(200, self._tier(body, "active"))
+            if path == "/api/config/demote":
+                return self._send(200, self._tier(body, "bench"))
+            if path == "/api/config/remove":
+                return self._send(200, self._config_remove(body))
+            if path == "/api/rollback":
+                return self._send(200, self._rollback(body))
+        except Exception as e:
+            return self._send(500, {"error": "%s: %s" % (type(e).__name__, e)})
+        return self._send(404, {"error": "unknown api", "path": path})
+
+    # ---- 管理接口（都要求 token）
+    def _data_dir(self):
+        return os.path.dirname(os.path.abspath(CFG["seeds"]))
+
+    def _key_api(self):
+        return {s.get("key"): s.get("api")
+                for s in (CACHE.get("report") or {}).get("sources", [])}
+
+    def _overview(self):
+        rep = CACHE.get("report") or {}
+        full, allp = CACHE.get("full") or {}, CACHE.get("all") or {}
+        def stat(doc):
+            sites = doc.get("sites") or []
+            ext = [x for x in sites if x.get("type") == 3]
+            return {"total": len(sites), "cms": len(sites) - len(ext),
+                    "ext": len(ext), "parses": len(doc.get("parses") or []),
+                    "sources": len(doc.get("sources") or [])}
+        return {
+            "last_run": CACHE.get("last_run"),
+            "running": CACHE["running"],
+            "error": CACHE.get("last_error"),
+            "elapsed": rep.get("elapsed_sec"),
+            "counts": {"alive": rep.get("alive"), "grace": rep.get("grace"),
+                       "active": rep.get("active"), "bench": rep.get("bench_n"),
+                       "dead": rep.get("dead"), "seeds": rep.get("seeds"),
+                       "probed": rep.get("probed"), "queued": rep.get("queued"),
+                       "merged": rep.get("merged"), "deduped": rep.get("deduped"),
+                       "orphan": getattr(self, "_orphan_n", 0),
+                       "tvbox": rep.get("tvbox_sites"),
+                       "libretv": rep.get("libretv_sources")},
+            "profiles": {"tvbox": stat(CACHE.get("tvbox") or {}),
+                         "ltv": stat(CACHE.get("ltv") or {}),
+                         "all": stat(allp)},
+            "sources": self._with_usage(rep.get("sources") or []),
+            "bench": rep.get("bench", []),
+            "dropped": rep.get("dropped", []),
+            "settings": A.load_settings(os.path.join(self._data_dir(),
+                                                     "settings.json")),
+            "pending": [A.norm(x.get("api", ""))
+                        for x in A.load_sources_doc(CFG["seeds"]).get("sources", [])
+                        if x.get("pending")],
+            "lastgood": self._lastgood_meta(),
+            "configs": self._configs_list(),
+            "config_limit": int((A.load_settings(os.path.join(
+                self._data_dir(), "settings.json")).get("max_configs") or 10)),
+            "lives": self._lives_summary(),
+            "assets": self._assets_list(),
+            "ext": self._ext_stats(),
+            "ext_sites": self._ext_sites(),
+            "reasons": self._reasons(),
+            "gate": JG.summary(self._data_dir()),
+            "rules": {"rules": A.RULES},
+            "mirrors": _mirror_list(),
+            "overrides": A.load_overrides(os.path.join(self._data_dir(),
+                                                       "overrides.json")),
+            "block": A.load_block(os.path.join(self._data_dir(), "block.json")),
+            "access": access_summary(60),
+        }
+
+    def _lastgood_meta(self):
+        path = os.path.join(self._data_dir(), "lastgood", "meta.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def _configs_list(self):
+        d = self._data_dir()
+        try:
+            with open(os.path.join(d, "configs.json"), encoding="utf-8") as f:
+                reg = json.load(f)
+        except Exception:
+            reg = {"configs": []}
+        st = A.load_cfg_state(d)
+        out = []
+        for ent in reg.get("configs") or []:
+            url = ent.get("url") if isinstance(ent, dict) else ent
+            if not url:
+                continue
+            s0 = st.get(url) or {}
+            out.append({"url": url,
+                        "tier": (ent.get("tier") if isinstance(ent, dict) else "active") or "active",
+                        "name": (ent.get("name") if isinstance(ent, dict) else "") or url,
+                        "last": s0.get("last") or 0,
+                        "latency": s0.get("latency") or 0,
+                        "fail": s0.get("fail") or 0,
+                        "ok": s0.get("ok"),
+                        "stats": s0.get("stats") or {},
+                        "added_cms": s0.get("added_cms") or 0,
+                        "added_ext": s0.get("added_ext") or 0,
+                        "error": s0.get("error") or ""})
+        return out
+
+    def _with_usage(self, rows):
+        usage = self._usage_map()
+        orphan = set()
+        n_orphan = 0
+        try:
+            with open(os.path.join(self._data_dir(), "sources.json"),
+                      encoding="utf-8") as f:
+                for x in (json.load(f).get("sources") or []):
+                    if x.get("orphan"):
+                        orphan.add(x.get("api") or "")
+                        n_orphan += 1
+        except Exception:
+            pass
+        self._orphan_n = n_orphan
+        out = []
+        for r0 in rows:
+            r = dict(r0)
+            r["used"] = sorted(usage.get(("key", r0.get("key")), set()))
+            if (r0.get("api") or "") in orphan:
+                r["orphan"] = 1
+            out.append(r)
+        return out
+
+    def _usage_map(self):
+        """每个站点被哪些输出档用了：("key", k) / ("api", u) -> {"默认","全能",...}
+
+        直接从生成好的 out/*.json 反查，比在内存里推演配额更准。
+        """
+        m = {}
+        for label, fn in (("默认", "tvbox.json"), ("全能", "all.json"),
+                          ("直连", "tvbox-direct.json")):
+            doc = ST.load(CFG["out"], fn, {})
+            for s0 in doc.get("sites") or []:
+                if s0.get("key"):
+                    m.setdefault(("key", s0["key"]), set()).add(label)
+                if s0.get("api"):
+                    m.setdefault(("api", s0["api"]), set()).add(label)
+        doc = ST.load(CFG["out"], "ltv.json", {})
+        for s0 in doc.get("sources") or []:
+            if s0.get("url"):
+                m.setdefault(("api", s0["url"]), set()).add("LibreTV")
+        return m
+
+    def _ext_sites(self):
+        """扩展站点逐个列出（含网盘），带「被哪些档使用」"""
+        d = self._data_dir()
+        doc = ST.load(d, "jars.json", {})
+        if not doc:
+            return {"items": [], "pan": []}
+        usage = self._usage_map()
+        block = ST.load(d, "block.json", {"names": [], "assets": []})
+        bnames = [str(x).lower() for x in (block.get("names") or [])]
+        items, pan = [], []
+        for s0 in doc.get("sites") or []:
+            name = s0.get("name") or ""
+            api = s0.get("api") or ""
+            key = A.ext_key(s0)
+            row = {"name": name, "kind": s0.get("kind") or "jar", "api": api,
+                   "jar": s0.get("jar") or "",
+                   "reason": A.site_reason(s0),
+                   "gate": (self._gate_map().get(s0.get("jar") or "") or {}),
+                   "used": sorted(usage.get(("key", key), set())),
+                   "blocked": any(b in name.lower() for b in bnames),
+                   "pinned": name in {str(x) for x in (block.get("pin") or [])}}
+            (pan if A.is_pan(s0) else items).append(row)
+        items.sort(key=lambda r: (r["kind"], r["name"]))
+        pan.sort(key=lambda r: r["name"])
+        return {"items": items, "pan": pan}
+
+    def _gate_map(self):
+        return ST.load(self._data_dir(), "jar_gate.json", {}) or {}
+
+    def _reasons(self):
+        """按原因汇总被拦下的站点数（对齐 ElderTV 的「需要留意」）"""
+        d = self._data_dir()
+        doc = ST.load(d, "jars.json", {})
+        cnt = {}
+        for s0 in doc.get("sites") or []:
+            why = A.site_reason(s0)
+            if why:
+                cnt[why] = cnt.get(why, 0) + 1
+        return {"counts": cnt, "total": sum(cnt.values())}
+
+    def _ext_stats(self):
+        """扩展站点按类型统计（剔除网盘类），给面板显示占比用"""
+        d = self._data_dir()
+        try:
+            with open(os.path.join(d, "jars.json"), encoding="utf-8") as f:
+                doc = json.load(f)
+        except Exception:
+            return {"jar": 0, "js": 0, "py": 0, "pan": 0, "total": 0}
+        out = {"jar": 0, "js": 0, "py": 0, "pan": 0}
+        for s0 in doc.get("sites") or []:
+            if A.is_pan(s0):
+                out["pan"] += 1
+                continue
+            k = s0.get("kind") or "jar"
+            out[k] = out.get(k, 0) + 1
+        out["total"] = out["jar"] + out["js"] + out["py"]
+        return out
+
+    def _assets_list(self):
+        """jar/js/py 资源清单：类型、承载站点数、是否可达"""
+        d = self._data_dir()
+        try:
+            with open(os.path.join(d, "jars.json"), encoding="utf-8") as f:
+                doc = json.load(f)
+        except Exception:
+            return []
+        try:
+            with open(os.path.join(d, "jar_state.json"), encoding="utf-8") as f:
+                ok_map = json.load(f)
+        except Exception:
+            ok_map = {}
+        agg = {}
+        for s0 in doc.get("sites") or []:
+            asset = s0.get("jar") or s0.get("api") or ""
+            if not asset:
+                continue
+            a = agg.setdefault(asset, {"asset": asset, "kind": s0.get("kind") or "jar",
+                                       "sites": 0, "sample": s0.get("name")})
+            a["sites"] += 1
+        try:
+            with open(os.path.join(d, "asset_speed.json"), encoding="utf-8") as f:
+                speeds = (json.load(f).get("items") or {})
+        except Exception:
+            speeds = {}
+        rows = list(agg.values())
+        for r in rows:
+            r["reachable"] = ok_map.get(r["asset"])
+            sp = speeds.get(r["asset"]) or {}
+            r.update(ttfb=sp.get("ttfb") or 0, speed=sp.get("speed") or 0,
+                     size=sp.get("bytes") or 0, tested=bool(sp))
+        rows.sort(key=lambda x: -x["sites"])
+        return rows[:200]
+
+    def _lives_summary(self):
+        try:
+            with open(os.path.join(self._data_dir(), "lives.json"),
+                      encoding="utf-8") as f:
+                doc = json.load(f)
+        except Exception:
+            return {"total": 0, "updated": "", "sample": []}
+        items = doc.get("items") or []
+        tested = None
+        try:
+            with open(os.path.join(self._data_dir(), "live_tested.json"),
+                      encoding="utf-8") as f:
+                t = json.load(f)
+            tested = {"cctv": len(t.get("cctv") or {}),
+                      "sat": len(t.get("sat") or {}),
+                      "hmt": len(t.get("hmt") or {}),
+                      "local": len(t.get("local") or {}),
+                      "dropped": len(t.get("other") or {}),
+                      "ok": t.get("ok") or 0,
+                      "lines": sum(len(v) for k in ("cctv", "sat", "hmt", "local")
+                                   for v in (t.get(k) or {}).values())}
+        except Exception:
+            pass
+        seg_bad = low_bps = _tomb_n = 0
+        try:
+            import live as _L0
+            _tomb_n = len(_L0.load_tomb(self._data_dir()))
+        except Exception:
+            pass
+        try:
+            with open(os.path.join(self._data_dir(), "live_url_cache.json"),
+                      encoding="utf-8") as f:
+                _c = json.load(f)
+            for v in _c.values():
+                if not v.get("ok"):
+                    continue
+                if v.get("seg_ok") is False:
+                    seg_bad += 1
+                elif (v.get("bps") or 0) and v["bps"] < 200:
+                    low_bps += 1
+        except Exception:
+            pass
+
+        def _row(x):
+            return {"name": x.get("name"), "url": x.get("url"),
+                    "tier": x.get("tier") or "bench",
+                    "from": x.get("from"), "blocked": int(x.get("blocked") or 0),
+                    "channels": x.get("channels_n"), "cctv": x.get("cctv"),
+                    "sat": x.get("sat"), "local": x.get("local"),
+                    "parse_ms": x.get("parse_ms"), "parse_err": x.get("parse_err"),
+                    "parsed_at": x.get("parsed_at")}
+        rows = [_row(x) for x in items]
+        def _score(x):
+            return (x.get("cctv") or 0) + (x.get("sat") or 0)
+        rows.sort(key=lambda r: (-_score(r), (r.get("name") or "")))
+        try:
+            stg = A.load_settings(os.path.join(self._data_dir(), "settings.json"))
+        except Exception:
+            stg = {}
+        n = int(stg.get("live_active_n") or 10)
+        act = [x for x in rows if x.get("tier") == "active"]
+        bnc = [x for x in rows if x.get("tier") == "bench" and not x.get("blocked")]
+        free = max(0, n - len(act))
+        return {"total": len(items), "updated": doc.get("updated") or "",
+                "tested": tested, "items": rows, "sample": rows[:30],
+                "active_n": n, "active_count": len(act), "free_slots": free,
+                "bench_count": len(bnc),
+                "bench_best": max([_score(x) for x in bnc] or [0]),
+                "weakest": min([_score(x) for x in act] or [0]),
+                "seg_bad": seg_bad, "low_bps": low_bps, "tomb": _tomb_n}
+
+    def _tier(self, body, tier):
+        """把一条线路设为主线路 / 备选"""
+        url = str(body.get("url") or "").strip()
+        d = self._data_dir()
+        path = os.path.join(d, "configs.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                reg = json.load(f)
+        except Exception:
+            return {"ok": False, "error": "源库读不到"}
+        entries = A._tier_map(reg.get("configs") or [])
+        limit = int(A.load_settings(os.path.join(d, "settings.json"))
+                    .get("max_configs") or 10)
+        if tier == "active":
+            act = [e for e in entries if isinstance(e, dict) and e.get("tier") != "bench"]
+            if url not in {e.get("url") for e in act} and len(act) >= limit:
+                return {"ok": False,
+                        "error": "已到最大解析线路数（%d），先把别的线路放进备选库" % limit}
+        hit = False
+        for e in entries:
+            if isinstance(e, dict) and e.get("url") == url:
+                e["tier"] = tier
+                hit = True
+        if not hit:
+            return {"ok": False, "error": "源库里没有这条线路"}
+        reg["configs"] = entries
+        ST.save_file(path, reg)
+        return {"ok": True, "tier": tier}
+
+    def _settings(self, body):
+        path = os.path.join(self._data_dir(), "settings.json")
+        cur = A.load_settings(path)
+        cur.update({k: v for k, v in (body or {}).items() if k in cur})
+        saved = A.save_settings(cur, path)
+        return {"ok": True, "settings": saved}
+
+    def _config_add(self, body):
+        url = (str(body.get("url") or "")).strip()
+        if not url.lower().startswith(("http://", "https://")):
+            return {"ok": False, "error": "要填配置地址（http/https 开头）"}
+        if A.is_private(url):
+            return {"ok": False, "error": "内网地址不收"}
+        d = self._data_dir()
+        path = os.path.join(d, "configs.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                reg = json.load(f)
+        except Exception:
+            reg = {"configs": []}
+        urls = [(x.get("url") if isinstance(x, dict) else x) for x in reg["configs"]]
+        if url in urls:
+            return {"ok": False, "error": "这个配置已经在源库里了"}
+        reg["configs"].append({"name": str(body.get("name") or "").strip(),
+                               "url": url, "note": ""})
+        ST.save_file(path, reg)
+        if not CFG_SYNC_LOCK.acquire(blocking=False):
+            return {"ok": False, "error": "已有线路在解析，稍后再试"}
+        try:
+            res = A.sync_config_sources(d, CFG["seeds"], force=True, only=url)
+            return {"ok": True, "synced": res[0] if res else None}
+        finally:
+            CFG_SYNC_LOCK.release()
+
+    def _config_sync(self, body):
+        url = str(body.get("url") or "").strip() or None
+        if not CFG_SYNC_LOCK.acquire(blocking=False):
+            return {"ok": False, "error": "已经有一条线路在解析，等它跑完再点（一条最多 60 秒）"}
+        try:
+            res = A.sync_config_sources(self._data_dir(), CFG["seeds"],
+                                        force=True, only=url)
+            return {"ok": True, "synced": res}
+        finally:
+            CFG_SYNC_LOCK.release()
+
+    def _config_remove(self, body):
+        url = str(body.get("url") or "").strip()
+        d = self._data_dir()
+        path = os.path.join(d, "configs.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                reg = json.load(f)
+        except Exception:
+            return {"ok": False, "error": "源库读不到"}
+        before = len(reg["configs"])
+        name = ""
+        for x in reg["configs"]:
+            if isinstance(x, dict) and x.get("url") == url:
+                name = x.get("name") or ""
+        reg["configs"] = [x for x in reg["configs"]
+                          if (x.get("url") if isinstance(x, dict) else x) != url]
+        ST.save_file(path, reg)
+        # 离源：这个接口带进来的站点/扩展/直播源留下来继续用
+        n = A.orphan_of_config(d, url, name)
+        return {"ok": True, "removed": before - len(reg["configs"]),
+                "orphaned": n}
+
+    def _rollback(self, body):
+        docs = A.restore_lastgood(self._data_dir(), CFG["out"])
+        if not docs:
+            return {"ok": False, "error": "还没有快照可用"}
+        load_cache()
+        return {"ok": True, "meta": docs.get("meta") or {},
+                "sites": len((docs.get("tvbox.json") or {}).get("sites") or [])}
+
+    def _probe_seed(self, url, name=""):
+        r = A.probe({"name": name or A.site_key(url), "api": url, "from": "manual"},
+                    timeout=20, retries=1, with_classes=True)
+        return {"alive": r["alive"], "type": r["type"], "msg": r["msg"],
+                "latency": r.get("latency") or 0,
+                "searchable": r.get("searchable", 1),
+                "param": r.get("param"), "nclass": len(r.get("classes") or []),
+                "sample": r.get("sample"), "items": r.get("items"),
+                "api": r["api"], "name": r["name"]}
+
+    def _source_add(self, body):
+        url = A.norm(str(body.get("url") or ""))
+        if not url:
+            return {"ok": False, "error": "缺 url"}
+        if A.is_private(url):
+            return {"ok": False, "error": "内网地址不收"}
+        name = str(body.get("name") or "").strip() or A.site_key(url)
+        info = self._probe_seed(url, name)
+
+        # 探测结果写进 state，下一轮聚合直接复用（不用重新测方言/搜索）
+        state = A.load_state(CFG["state"])
+        st = state.setdefault(url, {})
+        if info["alive"]:
+            st.update(type=info["type"], name=name, last_ok=int(time.time()),
+                      fail_streak=0, ok_streak=int(st.get("ok_streak") or 0) + 1)
+            if info.get("param"):
+                st["param"] = info["param"]
+            st["searchable"] = int(info.get("searchable", 1))
+        A.save_state(CFG["state"], state)
+
+        path = CFG["seeds"]
+        doc = A.load_sources_doc(path)
+        have = {A.norm(x["api"]) for x in doc["sources"] if x.get("api")}
+        added = False
+        if url not in have:
+            doc["sources"].append({"name": name, "api": url, "from": "manual"})
+            A.dump_sources_doc(path, doc)
+            added = True
+        return {"ok": info["alive"], "added": added, "result": info}
+
+    def _source_remove(self, body):
+        url = A.norm(str(body.get("url") or ""))
+        if not url:
+            key = str(body.get("key") or "")
+            url = A.norm(self._key_api().get(key) or "")
+        if not url:
+            return {"ok": False, "error": "缺 url 或 key"}
+        path = CFG["seeds"]
+        doc = A.load_sources_doc(path)
+        before = len(doc["sources"])
+        doc["sources"] = [x for x in doc["sources"]
+                          if A.norm(x.get("api", "")) != url]
+        A.dump_sources_doc(path, doc)
+        return {"ok": True, "removed": before - len(doc["sources"]), "url": url}
+
+    def _override(self, body):
+        action = str(body.get("action") or "")
+        url = A.norm(str(body.get("url") or "")) or \
+            A.norm(self._key_api().get(str(body.get("key") or "")) or "")
+        if not url:
+            return {"ok": False, "error": "缺 url 或 key"}
+        path = os.path.join(self._data_dir(), "overrides.json")
+        ov = A.load_overrides(path)
+        field = {"disable": "disabled", "enable": "disabled",
+                 "pin": "pinned", "unpin": "pinned",
+                 "bench": "bench", "unbench": "bench"}.get(action)
+        if not field:
+            return {"ok": False, "error": "action 只支持 disable/enable/pin/unpin/bench/unbench"}
+        lst = [x for x in ov[field] if A.norm(x) != url]
+        if action in ("disable", "pin", "bench"):
+            lst.append(url)
+        ov[field] = lst
+        # 一个源不该同时处于互斥状态：禁用了就退出置顶/备选
+        if action == "disable":
+            ov["pinned"] = [x for x in ov["pinned"] if A.norm(x) != url]
+            ov["bench"] = [x for x in ov["bench"] if A.norm(x) != url]
+        if action in ("pin",):
+            ov["bench"] = [x for x in ov["bench"] if A.norm(x) != url]
+        A.save_overrides(ov, path)
+        return {"ok": True, "overrides": ov}
+
+    def _block(self, body):
+        action = str(body.get("action") or "add")
+        field = str(body.get("field") or "names")
+        raw = body.get("value")
+        if field not in ("names", "assets"):
+            return {"ok": False, "error": "field 只支持 names / assets"}
+        path = os.path.join(self._data_dir(), "block.json")
+        blk = A.load_block(path)
+        if action in ("set", "setList"):
+            vals = raw if isinstance(raw, list) else str(raw or "").splitlines()
+            lst = [str(x).strip() for x in vals if str(x).strip()]
+        else:
+            value = (raw[0] if isinstance(raw, list) and raw else str(raw or "")).strip()
+            lst = [x for x in blk.get(field, []) if x != value]
+            if action == "add" and value:
+                lst.append(value)
+        blk[field] = lst
+        ST.save_file(path, blk)
+        return {"ok": True, "block": blk}
+
+    def _probe_one(self, body):
+        url = A.norm(str(body.get("url") or "")) or \
+            A.norm(self._key_api().get(str(body.get("key") or "")) or "")
+        if not url:
+            return {"ok": False, "error": "缺 url 或 key"}
+        info = self._probe_seed(url, str(body.get("name") or ""))
+        return dict(ok=True, result=info)
+
+    # ---- 状态面板（页面本体在 admin.html，这里只注入初始数据）
+    def _status_html(self):
+        return self._render_admin()
+
+    def _render_admin(self):
+        try:
+            pth = os.path.join(HERE, "admin.html")
+            with open(pth, encoding="utf-8") as f:
+                tpl = f.read()
+            try:
+                # 显示「最新一次改动」的时间（admin.html 和所有 .py 里最新的那个），
+                # 这样后端改了也能一眼看出是不是新版本
+                newest = os.path.getmtime(pth)
+                for fn in os.listdir(HERE):
+                    if fn.endswith(".py"):
+                        newest = max(newest, os.path.getmtime(os.path.join(HERE, fn)))
+                stamp = time.strftime("%m-%d %H:%M", time.localtime(newest))
+            except Exception:
+                stamp = "?"
+            tpl = tpl.replace("__BUILD__", "构建 " + stamp)
+            tpl = tpl.replace("__PREFIX__", getattr(self, "_prefix", "") or "")
+            return tpl.replace("__BOOT__",
+                               json.dumps(self._overview(), ensure_ascii=False))
+        except Exception as e:
+            return ("<h1>管理页缺失</h1><p>%s</p>" % e)
+
+    # 访问日志只留错误，避免刷屏
+    def log_message(self, fmt, *args):
+        pass
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--bind", default=os.environ.get("BIND", "0.0.0.0"))
+    ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", "5680")))
+    ap.add_argument("--interval", type=float,
+                    default=float(os.environ.get("INTERVAL", "6")),
+                    help="定时聚合间隔（小时），0 = 不自动跑")
+    ap.add_argument("--token", default=os.environ.get("TOKEN", ""),
+                    help="/refresh 的访问令牌，留空则不需鉴权")
+    ap.add_argument("--base-url", default=os.environ.get("BASE_URL", ""),
+                    help="写进面板/多仓的对外地址，如 http://192.168.1.10:5680")
+    ap.add_argument("--seeds", default=os.environ.get("SEEDS",
+                    os.path.join(HERE, "sources.json")))
+    ap.add_argument("--out", default=os.environ.get("OUT_DIR",
+                    os.path.join(HERE, "out")))
+    ap.add_argument("--state", default=os.environ.get("STATE",
+                    os.path.join(HERE, "state.json")))
+    ap.add_argument("--workers", type=int, default=int(os.environ.get("WORKERS", "3")))
+    ap.add_argument("--timeout", type=int, default=int(os.environ.get("TIMEOUT", "20")))
+    ap.add_argument("--drop-after", type=int, default=int(os.environ.get("DROP_AFTER", "3")))
+    ap.add_argument("--proxy", action="store_true",
+                    default=os.environ.get("PROXY", "") in ("1", "true", "yes"),
+                    help="TVBox 输出改走 /cms/<key> 透明代理（修正采集站 t= 参数问题）")
+    ap.add_argument("--no-startup-run", action="store_true")
+    a = ap.parse_args()
+
+    # 没有令牌又监听 0.0.0.0 = 管理面板裸奔。内网自用没问题，
+    # 但一旦映射到公网就是任何人可改配置，这里必须提醒。
+    if not a.token and a.bind == "0.0.0.0":
+        print("!! 警告：没有设置 TOKEN 且监听 0.0.0.0，管理面板与写接口无鉴权。\n"
+              "!! 内网自用可忽略；要暴露到公网请设置 TOKEN 环境变量（如 openssl rand -hex 12）。")
+
+    CFG.update(seeds=a.seeds, out=a.out, state=a.state, workers=a.workers,
+               timeout=a.timeout, drop_after=a.drop_after, token=a.token,
+               base_url=a.base_url, interval=max(a.interval, 0) * 3600)
+    if a.proxy:
+        base = a.base_url.rstrip("/")
+        if not base:
+            base = "http://%s:%s" % ("127.0.0.1" if a.bind in ("0.0.0.0", "::")
+                                     else a.bind, a.port)
+            print("!! 开了 --proxy 但没给 --base-url，站点地址会写成 %s" % base)
+        CFG["proxy_base"] = base
+    os.makedirs(CFG["out"], exist_ok=True)
+    load_cache()
+    global AUTH_PATH
+    _dd = os.path.dirname(os.path.abspath(CFG["seeds"]))
+    AUTH_PATH = os.path.join(_dd, "auth.json")
+    # 外置规则：data/rules.json 存在就用它覆盖默认值
+    try:
+        rules_path = os.path.join(_dd, "rules.json")
+        if not os.path.exists(rules_path):
+            ST.save_file(rules_path, A.RULES_DEFAULT)
+        A.apply_rules(A.load_rules(_dd))
+        log("规则已载入（%s）" % rules_path)
+        try:
+            _mv = A.migrate_source_origin(_dd)
+            if _mv:
+                log("来源标记迁移：%d 条 sources 的 from 从名字改成配置地址" % _mv)
+        except Exception as e:
+            log("来源标记迁移失败：%s" % e)
+        try:
+            import discover as D
+            mpath = os.path.join(_dd, "mirrors.json")
+            if not os.path.exists(mpath):
+                ST.save_file(mpath, {"mirrors": D.MIRROR_DEFAULT})
+            _m = D.load_mirrors(_dd)
+            log("GitHub 镜像 %d 个（%s）" % (len(_m), mpath))
+        except Exception as e:
+            log("镜像配置载入失败，用默认：%s" % e)
+    except Exception as e:
+        log("规则载入失败，用默认值：%s" % e)
+    access_load(os.path.join(_dd, "access.json"))
+
+    def _flush_loop():
+        while True:
+            time.sleep(15)
+            access_flush()
+    threading.Thread(target=_flush_loop, daemon=True).start()
+
+    def _config_loop():
+        while True:
+            time.sleep(1800)                      # 每 30 分钟看一次有没有到期的
+            try:
+                res = A.sync_config_sources(
+                    os.path.dirname(os.path.abspath(CFG["seeds"])), CFG["seeds"])
+                if res:
+                    log("配置源刷新完成：%d 个（有变化的下轮聚合生效）" % len(res))
+            except Exception as e:
+                log("配置源刷新失败：%s: %s" % (type(e).__name__, e))
+    threading.Thread(target=_config_loop, daemon=True).start()
+
+    def _live_loop():
+        # 启动后先等 3 分钟（让点播聚合先跑），之后每小时看一次直播有没有到期
+        time.sleep(180)
+        while True:
+            try:
+                _live_tick(_dd, log=log)
+            except Exception as e:                # noqa: BLE001
+                log("直播调度失败：%s: %s" % (type(e).__name__, e))
+            time.sleep(3600)
+    threading.Thread(target=_live_loop, daemon=True).start()
+
+    AC.clear_legacy()
+    CACHE.setdefault("libretv", CACHE.get("ltv") or {})
+    n_sites = len(CACHE["tvbox"].get("sites", []))
+    n_src = len((CACHE.get("ltv") or {}).get("sources", []))
+    base = CFG["base_url"].rstrip("/") or ("http://%s:%s" % (
+        "127.0.0.1" if a.bind in ("0.0.0.0", "::") else a.bind, a.port))
+    print("TVBox 聚合器服务启动", flush=True)
+    print("  监听      %s:%s" % (a.bind, a.port), flush=True)
+    print("  默认档    %s/tvbox.json   （缓存 %d 站：CMS+jar+py，影视仓用）"
+          % (base, n_sites), flush=True)
+    print("  全能档    %s/all.json      （缓存 %d 站：+js）"
+          % (base, len((CACHE.get("all") or {}).get("sites", []))), flush=True)
+    print("  LibreTV   %s/ltv.json      （缓存 %d 源）" % (base, n_src), flush=True)
+    for key, path, label in (("full", "/tvbox-full.json", "全量(jar)"),
+                             ("all", "/tvbox-all.json", "全能(jar+js+py)")):
+        doc = CACHE.get(key) or {}
+        if doc.get("sites"):
+            n_ext = sum(1 for x in doc["sites"] if x.get("type") == 3)
+            print("  %-14s %s%s （%d 站，其中扩展 %d）"
+                  % (label, base, path, len(doc["sites"]), n_ext), flush=True)
+    print("  面板      %s/status" % base, flush=True)
+    print("  定时      %s" % ("关闭" if CFG["interval"] == 0
+                              else "每 %.0f 小时" % (CFG["interval"] / 3600)),
+          flush=True)
+
+    if not a.no_startup_run:
+        run_async(delay=0.5)
+    if CFG["interval"] > 0:
+        threading.Thread(target=scheduler, name="scheduler", daemon=True).start()
+
+    srv = ThreadingHTTPServer((a.bind, a.port), Handler)
+    srv.daemon_threads = True
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        print("\n收到 Ctrl-C，退出", flush=True)
+    finally:
+        srv.server_close()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,9 @@
+# 统一用 LF：这个项目主要跑在 Linux 容器里，CRLF 会让 Dockerfile 出问题
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.png binary
+*.jpg binary
+*.jar binary
+*.gz binary
+*.tgz binary

@@ -1,0 +1,73 @@
+# 许可协议（源码可见 · 非开源）
+
+Copyright (c) 2026 TVBox Aggregator 作者. All rights reserved.
+
+**本协议不是开源许可证。** 本项目采用「源码可见」（Source Available）模式：
+你可以阅读源码，但不享有修改后分发、商业使用等权利。
+
+---
+
+## 一、允许（无需申请）
+
+1. **阅读与学习**：阅读本仓库源码，用于学习、研究、技术交流。
+2. **个人自用**：在自己或自己家庭拥有的设备上部署、运行本软件，不对外提供服务。
+3. **本地修改自用**：为了自己使用而修改源码，**修改版不得分发**。
+4. **引用与讨论**：在文章、视频、问答中引用代码片段并注明出处，用于评论、教学或研究。
+
+## 二、禁止
+
+1. **商业使用**：不得将本软件（含修改版）用于任何商业目的，包括但不限于：
+   - 出售、出租、按次收费、打包进商业产品
+   - 作为付费服务、会员权益、引流工具的一部分
+   - 在软件内插入广告、推广、导流内容后发布
+2. **二次分发**：不得以任何形式分发本软件的源码或构建产物（含修改版），包括：
+   - 上传到其他代码托管平台、网盘、论坛、社群
+   - 重新打包成镜像、安装包、整合包后发布
+   - 作为其他项目的依赖或子模块分发
+3. **对外提供服务**：不得将本软件部署为面向公众的服务（无论是否收费）。
+4. **去除声明**：不得删除或修改本协议、版权声明、作者标识。
+
+## 三、第三方内容
+
+本软件不包含、不提供任何影视资源、采集接口、直播源或插件。
+使用者自行添加的内容，其合法性与本项目无关，由使用者自行承担全部责任。
+
+本项目运行时可能访问第三方地址（配置接口、插件 jar、直播流），
+这些内容由第三方维护，本项目不对其可用性、合法性、安全性作任何保证。
+
+## 四、免责
+
+本软件按「现状」提供，不附带任何明示或暗示的担保，包括但不限于适销性、
+特定用途适用性和非侵权保证。在任何情况下，作者均不对因使用或无法使用
+本软件而产生的任何直接、间接、偶然、特殊或后果性损害承担责任。
+
+使用者应自行确认在所在国家或地区使用本软件的合法性。
+因使用本软件产生的任何法律责任，由使用者自行承担。
+
+## 五、授权与咨询
+
+如需商业授权、二次分发许可或其他用途，请联系作者取得书面许可。
+
+作者保留随时修改本协议的权利；修改后的协议自仓库更新之日起生效，
+已按旧协议获得授权的使用不受影响。
+
+---
+
+## English Summary (non-binding)
+
+This is **NOT** an open-source license. All rights reserved.
+
+**Permitted**: reading and studying the source, running it for personal use
+on your own devices, local modifications for personal use (no distribution),
+quoting small excerpts with attribution for commentary or teaching.
+
+**Prohibited**: any commercial use, redistribution of the source or build
+artifacts (original or modified) in any form, operating it as a public
+service, removing this notice.
+
+The software is provided "AS IS", without warranty of any kind. The author
+is not liable for any damages arising from its use. Users are solely
+responsible for complying with the laws of their jurisdiction and for any
+third-party content they choose to add.
+
+For commercial licensing or redistribution permission, contact the author.

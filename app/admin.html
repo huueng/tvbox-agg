@@ -1,0 +1,1276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TVBox 聚合器 · 管理</title>
+<style>
+:root{--bg:#f6f7f9;--fg:#1f2328;--mut:#656d76;--line:#e4e6eb;--card:#fff;
+--ok:#1a7f37;--warn:#9a6700;--bad:#cf222e;--pri:#0969da}
+*{box-sizing:border-box}
+body{font:14px/1.6 system-ui,"Microsoft YaHei",sans-serif;margin:0;padding:24px;
+background:var(--bg);color:var(--fg)}
+h1{font-size:20px;margin:0 0 6px}h2{font-size:15px;margin:0 0 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+padding:16px 18px;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #eef0f3;vertical-align:top}
+th{color:var(--mut);font-weight:500;font-size:12px;white-space:nowrap}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+code{background:#f2f3f5;padding:1px 5px;border-radius:4px;font-size:12px;word-break:break-all}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}
+.bad{color:var(--bad);font-weight:600}.mut{color:var(--mut);font-size:12px}
+.tag{display:inline-block;padding:0 5px;border-radius:4px;background:#eef1f5;
+color:#57606a;font-size:11px;margin-left:4px}
+.tag.red{background:#ffebe9;color:var(--bad)}
+.tag.blue{background:#ddf4ff;color:#0969da}
+tr.dim td{opacity:.62}
+button{font:inherit;padding:4px 10px;border:1px solid #d0d7de;border-radius:6px;
+background:#fff;cursor:pointer}
+button:hover{background:#f3f4f6}
+button.pri{background:#1f883d;border-color:#1a7f37;color:#fff}
+button.pri:hover{background:#1a7f37}
+button.mini{padding:1px 7px;font-size:12px;margin:1px 0}
+button:disabled{opacity:.6;cursor:default}
+input,textarea{font:inherit;padding:5px 8px;border:1px solid #d0d7de;border-radius:6px;
+background:#fff;width:100%}
+input[type=number]{width:92px}
+.stat{display:flex;gap:26px;flex-wrap:wrap;margin-top:10px}
+.stat div b{font-size:20px;display:block;line-height:1.2}
+.stat div span{color:var(--mut);font-size:12px}
+#toast{position:fixed;right:20px;bottom:20px;max-width:440px;background:#1f2328;
+color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;display:none;z-index:99;
+box-shadow:0 4px 16px rgba(0,0,0,.2)}
+.spark{width:100%;height:64px}
+.set{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end}
+.setv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 28px}
+.si{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.si span{font-size:12px;color:var(--mut)}
+.si input{width:110px;flex:0 0 auto}
+.set label{font-size:12px;color:var(--mut);display:block;margin-bottom:2px}
+</style>
+</head>
+<body><style>
+:root{--bg:#f6f7f9;--fg:#1f2328;--mut:#656d76;--line:#e4e6eb;--card:#fff;
+--ok:#1a7f37;--warn:#9a6700;--bad:#cf222e;--pri:#0969da}
+*{box-sizing:border-box}
+body{font:14px/1.6 system-ui,"Microsoft YaHei",sans-serif;margin:0;padding:24px;
+background:var(--bg);color:var(--fg)}
+h1{font-size:20px;margin:0 0 6px}h2{font-size:15px;margin:0 0 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+padding:16px 18px;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #eef0f3;vertical-align:top}
+th{color:var(--mut);font-weight:500;font-size:12px;white-space:nowrap}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+code{background:#f2f3f5;padding:1px 5px;border-radius:4px;font-size:12px;word-break:break-all}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}
+.bad{color:var(--bad);font-weight:600}.mut{color:var(--mut);font-size:12px}
+.tag{display:inline-block;padding:0 5px;border-radius:4px;background:#eef1f5;
+color:#57606a;font-size:11px;margin-left:4px}
+.tag.red{background:#ffebe9;color:var(--bad)}
+.tag.blue{background:#ddf4ff;color:#0969da}
+tr.dim td{opacity:.62}
+button{font:inherit;padding:4px 10px;border:1px solid #d0d7de;border-radius:6px;
+background:#fff;cursor:pointer}
+button:hover{background:#f3f4f6}
+button.pri{background:#1f883d;border-color:#1a7f37;color:#fff}
+button.pri:hover{background:#1a7f37}
+button.mini{padding:1px 7px;font-size:12px;margin:1px 0}
+button:disabled{opacity:.6;cursor:default}
+input,textarea{font:inherit;padding:5px 8px;border:1px solid #d0d7de;border-radius:6px;
+background:#fff;width:100%}
+input[type=number]{width:92px}
+.stat{display:flex;gap:26px;flex-wrap:wrap;margin-top:10px}
+.stat div b{font-size:20px;display:block;line-height:1.2}
+.stat div span{color:var(--mut);font-size:12px}
+#toast{position:fixed;right:20px;bottom:20px;max-width:440px;background:#1f2328;
+color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;display:none;z-index:99;
+box-shadow:0 4px 16px rgba(0,0,0,.2)}
+.spark{width:100%;height:64px}
+.set{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end}
+.setv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 28px}
+.si{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.si span{font-size:12px;color:var(--mut)}
+.si input{width:110px;flex:0 0 auto}
+.set label{font-size:12px;color:var(--mut);display:block;margin-bottom:2px}
+
+.app{display:grid;grid-template-columns:170px minmax(0,1fr);min-height:100vh}
+.side{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;
+  gap:2px;padding:14px 10px;border-right:1px solid var(--line);background:#fbfcfd}
+.side .brand{font-weight:600;font-size:13px;padding:0 10px 12px;color:var(--fg)}
+.side nav{display:flex;flex-direction:column;gap:2px}
+.side nav a{padding:7px 10px;border-radius:6px;font-size:13px;color:var(--fg);
+  text-decoration:none}
+.side nav a:hover{background:#eef1f4}
+.side nav a.on{background:var(--pri);color:#fff}
+.side-foot{margin-top:auto;padding:10px 4px 0;border-top:1px solid var(--line)}
+main{padding:16px 20px 40px;min-width:0}
+.pagehead{margin-bottom:12px}
+section[data-panel]{display:none}
+section[data-panel].on{display:block}
+input.q{width:100%;max-width:320px;margin:0 0 8px;padding:5px 8px;font-size:12px;
+  border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--fg)}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start}
+.grid2 .card{margin:0}
+.twocol{display:grid;grid-template-columns:1fr 1fr;gap:0 18px;align-items:start}
+.twocol table{font-size:12px}
+@media (max-width:1200px){.twocol{grid-template-columns:1fr}}
+td.name{cursor:default}
+.cp{color:var(--pri);cursor:copy;font-size:11px;opacity:.55;margin-left:4px}
+.cp:hover{opacity:1}
+td.name:hover code{color:var(--pri)}
+table.tight td,table.tight th{padding:5px 6px}
+table.tight td:last-child{width:1%;white-space:nowrap}
+td.name{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+td.ops{white-space:nowrap}
+td.ops .mini{margin-right:2px}
+@media (max-width:1100px){.grid2{grid-template-columns:1fr}}
+@media (max-width:860px){
+  .app{grid-template-columns:1fr}
+  .side{position:static;height:auto;flex-direction:row;align-items:center;
+    overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)}
+  .side .brand,.side-foot{display:none}
+  .side nav{flex-direction:row;gap:6px}
+}
+</style>
+
+<div class="app">
+  <aside class="side">
+    <div class="brand">TVBox 聚合器<div class="mut" style="font-size:10px;font-weight:400" id="build">__BUILD__</div></div>
+    <nav>
+      <a href="#overview" data-tab="overview">总览</a>
+      <a href="#vod" data-tab="vod">点播</a>
+      <a href="#live" data-tab="live">直播</a>
+      <a href="#configs" data-tab="configs">配置接口</a>
+      <a href="#settings" data-tab="settings">设置</a>
+      <a href="#ops" data-tab="ops">运维</a>
+    </nav>
+    <div class="side-foot"><button class="mini" onclick="logout()">退出登录</button></div>
+  </aside>
+  <main>
+    <div class="pagehead" id="head">加载中…</div>
+    
+    <section data-panel="overview">
+<div class="card">
+  <div class="row">
+    <div class="mut" style="flex:1;min-width:200px">已登录（会话 7 天有效，换浏览器要重新输密码）</div>
+    <button class="pri" onclick="refreshRun()">立即重新聚合</button>
+    <button onclick="rollback()">退回上一次成功</button>
+    <a href="/report.md" target="_blank"><button>体检报告</button></a>
+    <button onclick="logout()">退出登录</button>
+  </div>
+  <div class="mut" id="lastgood" style="margin-top:8px"></div>
+  <table id="stats2" style="margin-top:14px"></table>
+  <div class="mut" style="margin-top:10px;font-size:11px">
+    <b>配置接口</b>=多仓/单仓 json；<b>采集站点</b>=type 0/1（CMS）；<b>扩展站点</b>=type 3（jar/js/py，
+    网盘已剔除）；<b>直播源</b>=配置里的 lives。
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <h2>可用地址</h2>
+    <table id="endpoints" class="tight"></table>
+    <div class="mut" style="margin-top:6px;font-size:11px">
+      配置类接口不登录也能拉，客户端直接填。
+    </div>
+  </div>
+  <div class="card">
+    <h2>需要留意 <span class="mut" id="warnCount"></span>
+      <button class="mini" style="float:right" onclick="gateScan()">重扫插件</button></h2>
+    <table id="warns" class="tight"></table>
+    <div class="mut" style="margin-top:6px;font-size:11px">
+      只读配置判定，被拦的站点不会进任何输出档。
+    </div>
+  </div>
+</div>
+</section>
+    <section data-panel="vod">
+<div class="card">
+  <h2>站点总表 <span class="mut" id="srcCount"></span></h2>
+  <div class="mut" style="margin-bottom:6px;font-size:11px">
+    类型 <b>cms</b> 是采集接口，<b>jar / js / py</b> 是扩展站点。「被使用」= 进了哪些输出档；
+    鼠标停在站名上能看地址。资源拖后腿就点「屏蔽」，下一轮聚合生效。
+  </div>
+  <div class="row" style="align-items:center;margin-bottom:6px">
+    <input class="q" style="margin:0" placeholder="按名称 / 地址 / 类型筛选" oninput="filterRows('sources', this.value)">
+    <button class="mini" onclick="speedAssets()">重测全部</button>
+    <button class="mini" onclick="speedFiltered('sources', this)">重测筛选</button>
+    <button class="mini" onclick="blockFiltered('sources')">屏蔽筛选</button>
+  </div>
+  <div class="twocol" id="sources"></div>
+</div>
+
+<div class="card">
+  <h2>未使用 / 备用站点 <span class="mut" id="benchCount"></span></h2>
+  <div class="row" style="align-items:center;margin-bottom:6px">
+    <input class="q" style="margin:0" placeholder="筛选" oninput="filterRows('bench', this.value)">
+    <button class="mini" onclick="speedFiltered('bench', this)">重测筛选</button>
+    <button class="mini" onclick="blockFiltered('bench')">屏蔽筛选</button>
+  </div>
+  <div class="twocol" id="bench"></div>
+</div>
+
+<div class="card">
+  <h2>已挡下的站点 <span class="mut" id="muteCount"></span></h2>
+  <div class="mut" style="margin-bottom:6px;font-size:11px">
+    先「已屏蔽」（你手动拉的），再「插件被拦截」（扫描判定）。两者不混排。
+    改了之后点「立即重新聚合」才生效。
+  </div>
+  <input class="q" placeholder="筛选" oninput="filterRows('muted', this.value)">
+  <div class="twocol" id="muted"></div>
+  <h3 style="margin:14px 0 6px;font-size:12px;color:#656d76">插件被拦截</h3>
+  <input class="q" placeholder="筛选" oninput="filterRows('muted2', this.value)">
+  <div class="twocol" id="muted2"></div>
+</div>
+
+<div class="card">
+  <h2>网盘站点 <span class="mut" id="panCount"></span></h2>
+  <div class="mut" style="margin-bottom:6px;font-size:11px">
+    spider 取的是网盘分享，要额外解析才能播，暂时不接入任何档。
+  </div>
+  <input class="q" placeholder="筛选" oninput="filterRows('pan', this.value)">
+  <div class="twocol" id="pan"></div>
+</div>
+
+</section>
+    <section data-panel="live"><div class="card">
+  <h2>直播源（测活 + 测速，按台排名）</h2>
+  <div class="mut" id="liveSum"></div>
+  <div class="row" style="margin-top:8px">
+    <a class="btn" href="/live/cctv.m3u" target="_blank">央视+卫视 m3u</a>
+    <a class="btn" href="/live/local.m3u" target="_blank">地方台 m3u（副接口）</a>
+    <a class="btn" href="/live/cctv.json" target="_blank">TVBox lives</a>
+    <button onclick="liveRefresh()">重新测速</button>
+    <button class="pri" onclick="liveRun('both')">立即大聚合+小聚合</button>
+    <button onclick="liveRun('big')">大聚合</button>
+    <button onclick="liveRun('small')">小聚合</button>
+    <button onclick="liveRun('screen')">备选初筛</button>
+  </div>
+  <div style="margin-top:10px"><table id="lives"></table></div>
+</div>
+
+</section>
+    <section data-panel="configs">
+<div class="card">
+  <h2>添加采集站点（CMS）</h2>
+  <div class="mut" style="margin-bottom:8px">
+    填一个 CMS 采集接口（通常以 <code>api.php/provide/vod</code> 结尾）。加入前会真跑一次体检：
+    拉列表 + 取分类 + 测搜索，可用才收。
+  </div>
+  <div class="row">
+    <div style="flex:3;min-width:260px"><input id="newUrl" placeholder="https://xxx.com/api.php/provide/vod"></div>
+    <div style="flex:1;min-width:120px"><input id="newName" placeholder="名称（可留空）"></div>
+    <button class="pri" onclick="addSource(this)">分析并加入</button>
+  </div>
+  <div id="addResult" class="mut" style="margin-top:10px"></div>
+</div>
+
+<div class="card">
+  <h2>配置接口 <span class="mut" id="cfgHead"></span></h2>
+  <div class="mut" style="margin-bottom:8px">
+    这里填的是<b>配置地址</b>（TVBox 单仓/多仓 json）。加入后立刻拉一次，之后每
+    <span id="daysHint">5</span> 天自动拉一次：里面的 CMS 并进待聚合源，jar/js/py 并进扩展池。
+  </div>
+  <div class="row">
+    <div style="flex:3;min-width:260px"><input id="cfgUrl" placeholder="https://xxx.com/config.json 或 多仓地址"></div>
+    <div style="flex:1;min-width:120px"><input id="cfgName" placeholder="名称（可留空）"></div>
+    <button class="pri" onclick="addConfig(this)">拉取并加入</button>
+    <button onclick="syncAll()">全部立即重拉</button>
+  </div>
+  <div id="cfgResult" class="mut" style="margin-top:10px"></div>
+
+  <div class="row" style="margin:18px 0 8px;align-items:center">
+    <h3 style="margin:0;font-size:13px;color:#656d76">
+      启用的配置接口 <span class="mut">（只有这些会并进站点池）</span>
+    </h3>
+    <button class="mini" onclick="rebuildPool()">重建站点池</button>
+  </div>
+  <input class="q" placeholder="筛选启用的配置接口" oninput="filterRows('configs', this.value)">
+  <table id="configs"></table>
+
+  <div class="row" style="margin:22px 0 8px;align-items:center">
+    <h3 style="margin:0;font-size:13px;color:#656d76">
+      备选配置接口 <span class="mut">（未启用：只统计产出，不并池）</span>
+    </h3>
+    <button class="mini" onclick="scanBench()">一键解析全部备选</button>
+  </div>
+  <input class="q" placeholder="筛选备选配置接口" oninput="filterRows('benchConfigs', this.value)">
+  <table id="benchConfigs"></table>
+
+  <h3 style="margin:20px 0 8px;font-size:13px;color:#656d76">
+    直播配置 <span class="mut">（含直播源的，全部列出，不参与主用·备用筛选）</span>
+  </h3>
+  <table id="liveConfigs"></table>
+</div>
+
+</section>
+    <section data-panel="settings"><div class="card">
+  <h2>设置 <span class="mut">（保存后下一轮聚合生效，不用重启）</span></h2>
+  <div class="mut" style="margin-bottom:10px;font-size:11px">
+    术语对齐 TVBox：<b>采集站点</b>=type 0/1 的 CMS 接口；<b>扩展站点</b>=type 3（jar/js/py 承载）；
+    <b>配置接口</b>=多仓/单仓 json。<b>输出站点数 = 采集站点 + 扩展站点</b>。
+  </div>
+  <div class="setv">
+    <div class="si"><span>默认档采集站点上限</span><input id="s_active_max" type="number" min="1" max="99"></div>
+    <div class="si"><span>单配置一次最多并几条 CMS</span><input id="s_merge_room" type="number" min="1" max="200"></div>
+    <div class="si"><span>每轮体检预算（探多少个源）</span><input id="s_probe_budget" type="number" min="5" max="500"></div>
+    <div class="si"><span>采集源池上限</span><input id="s_max_seeds" type="number" min="10" max="1000"></div>
+    <div class="si"><span>每个站最多几个分类</span><input id="s_max_categories" type="number" min="1" max="60"></div>
+    <div class="si"><span>输出里带直播(1开/0关)</span><input id="s_embed_lives" type="number" min="0" max="1"></div>
+    <div class="si"><span>首个站点名加聚合时间(1开/0关)</span><input id="s_stamp_name" type="number" min="0" max="1"></div>
+    <div class="si"><span>直播优选源个数</span><input id="s_live_active_n" type="number" min="1" max="50"></div>
+    <div class="si"><span>分片取不到的线路不输出(1开/0关)</span><input id="s_live_drop_seg_bad" type="number" min="0" max="1"></div>
+    <div class="si"><span>直播源自动补位(1开/0关)</span><input id="s_live_auto_promote" type="number" min="0" max="1"></div>
+    <div class="si"><span>直播大聚合间隔(天)</span><input id="s_live_big_days" type="number" min="1" max="30"></div>
+    <div class="si"><span>直播小聚合间隔(天)</span><input id="s_live_small_days" type="number" min="1" max="7"></div>
+    <div class="si"><span>直播备选初筛间隔(天)</span><input id="s_live_bench_days" type="number" min="1" max="30"></div>
+    <div class="si"><span>屏蔽/删除的源多少天复检(天)</span><input id="s_live_tomb_days" type="number" min="1" max="90"></div>
+    <div class="si"><span>复检连续失败几次就真删</span><input id="s_live_tomb_max_fail" type="number" min="1" max="20"></div>
+    <div class="si"><span>备选接口初筛间隔(天)</span><input id="s_bench_days" type="number" min="1" max="30"></div>
+    <div class="si"><span>输出排序</span><select id="s_sort_mode" style="width:110px">
+      <option value="kind">按资源类型</option>
+      <option value="latency">按响应时间</option>
+      <option value="name">按名称</option>
+    </select></div>
+    <div class="si"><span>首个站点用内置豆瓣(1开/0关)</span><input id="s_douban_first" type="number" min="0" max="1"></div>
+    <div class="si"><span>时间后面的文字</span><input id="s_stamp_suffix" type="text" style="width:110px" placeholder="豆瓣"></div>
+    <div class="si"><span>默认档扩展站点数</span><input id="s_ext_default" type="number" min="0" max="600"></div>
+    <div class="si"><span>全能档扩展站点数</span><input id="s_ext_all" type="number" min="0" max="600"></div>
+    <div class="si"><span>LibreTV 输出 CMS 数</span><input id="s_ltv_cms" type="number" min="0" max="500"></div>
+    <div class="si"><span>进备选池的延迟阈值(ms)</span><input id="s_bench_latency" type="number" min="500" step="500"></div>
+    <div class="si"><span>备选池补探间隔(轮)</span><input id="s_bench_every" type="number" min="1" max="50"></div>
+    <div class="si"><span>单个扩展资源最多带几站</span><input id="s_max_per_asset" type="number" min="1" max="99"></div>
+    <div class="si"><span>启用的配置接口上限</span><input id="s_max_configs" type="number" min="1" max="200"></div>
+    <div class="si"><span>配置接口不足时自动补位(1开/0关)</span><input id="s_auto_promote" type="number" min="0" max="1"></div>
+    <div class="si"><span>配置连续几次 0 产出转备选</span><input id="s_zero_bench" type="number" min="1" max="9"></div>
+    <div class="si"><span>配置接口拉取间隔(天)</span><input id="s_config_days" type="number" min="1" max="90"></div>
+    <div class="si"><span>配置连续失败几次移除</span><input id="s_config_max_fail" type="number" min="1" max="20"></div>
+    <div class="si"><span>单配置产出低于此数退回备选</span><input id="s_auto_floor" type="number" min="1" max="50"></div>
+    <div class="si"><span>扩展资源测速间隔(小时)</span><input id="s_speed_hours" type="number" min="1" max="168"></div>
+    <div class="si"><span>直播每轮最多测几条线路</span><input id="s_live_max_test" type="number" min="100" max="20000" step="100"></div>
+    <div class="si"><span>每个台输出几条直播线路</span><input id="s_live_lines_per" type="number" min="1" max="20"></div>
+    <div class="si"><span>聚合周期(hours=每N小时 / daily=每天)</span><input id="s_interval_mode" type="text" placeholder="hours"></div>
+    <div class="si"><span>每几小时聚合(0=关闭)</span><input id="s_interval_hours" type="number" min="0" max="168"></div>
+    <div class="si"><span>每天几点聚合</span><input id="s_daily_at" type="text" placeholder="03:30"></div>
+  </div>
+  <div class="row" style="margin-top:12px">
+    <button class="pri" onclick="saveSettings()">保存设置</button>
+  </div>
+  <div class="row" style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
+    <div><label>原密码</label><input id="pw_old" type="password" style="width:160px"></div>
+    <div><label>新密码（至少 6 位）</label><input id="pw_new" type="password" style="width:160px"></div>
+    <button onclick="changePw()">修改管理密码</button>
+  </div>
+  <div class="mut" id="rulesInfo" style="margin-top:14px;font-size:11px"></div>
+
+  <div style="margin-top:18px;border-top:1px solid var(--line);padding-top:14px">
+    <h3 style="margin:0 0 6px;font-size:13px;color:#656d76">GitHub 镜像 <span class="mut" id="mirrorCount"></span></h3>
+    <div class="mut" style="font-size:11px;margin-bottom:6px">
+      一行一个，按顺序尝试。两种占位符：<code>{url}</code> 表示整条原始地址（前缀型镜像）；
+      <code>{user} {repo} {branch} {path}</code> 只对 GitHub raw 地址可用（jsdelivr 那种）。
+      镜像挂了就在这里换，<b>保存后立即生效</b>。
+    </div>
+    <textarea id="mirrorBox" rows="4" style="width:100%;box-sizing:border-box;font:12px/1.6 ui-monospace,Consolas,monospace;padding:8px;border:1px solid var(--line);border-radius:6px"></textarea>
+    <div class="row" style="margin-top:8px">
+      <button class="pri" onclick="saveMirrors()">保存镜像</button>
+      <button onclick="resetMirrors()">恢复默认</button>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>站点屏蔽 <span class="mut">（只作用于 jar / 全能档）</span></h2>
+  <div class="row" style="align-items:flex-start">
+    <div style="flex:1;min-width:240px">
+      <div class="mut">站点名关键字（每行一个）</div>
+      <textarea id="blockNames" rows="2"></textarea>
+    </div>
+    <div style="flex:1;min-width:240px">
+      <div class="mut">资源地址关键字（每行一个）</div>
+      <textarea id="blockAssets" rows="2"></textarea>
+    </div>
+  </div>
+  <div style="margin-top:10px"><button class="pri" onclick="saveBlock()">保存名单</button></div>
+</div>
+
+</section>
+    <section data-panel="ops"><div class="card">
+  <h2>调用统计</h2>
+  <div class="mut" style="margin-bottom:8px">
+    只统计<b>接口 json 的拉取次数</b>（/tvbox.json /all.json /ltv.json /live/*）。
+    次数高说明这个地址真在被用；「唯一 IP」突然变多说明地址可能被传出去了。
+  </div>
+  <div class="mut" id="accSum" style="margin-bottom:8px"></div>
+  <input class="q" placeholder="筛选接口" oninput="filterRows('access', this.value)">
+  <table id="access"></table>
+</div>
+
+<div class="card">
+  <h2>历史轮次 <span class="mut">（每轮聚合的体检记录）</span></h2>
+  <svg class="spark" id="spark" viewBox="0 0 600 64" preserveAspectRatio="none"></svg>
+  <div class="mut" id="sparkNote"></div>
+</div>
+
+
+<div id="toast"></div>
+
+</section>
+  </main>
+</div>
+
+<script>
+const BOOT = __BOOT__;
+window.PFX = "";   // 现在统一用相对路径，不再需要前缀
+let O = BOOT;
+const FILTERS = {};   // 每张表的筛选词，渲染后重放（否则 15 秒轮询会把筛选冲掉）
+
+function toast(msg, bad){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.background = bad ? '#cf222e' : '#1f2328';
+  t.style.display = 'block';
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 5000);
+}
+function logout(){ location.href = '/logout'; }
+async function changePw(){
+  const old = document.getElementById('pw_old').value;
+  const nw = document.getElementById('pw_new').value;
+  if(!old || !nw) return toast('原密码和新密码都要填', true);
+  const r = await api('/api/password', {old, new: nw});
+  if(r.error || r.ok === false) return toast(r.error || '修改失败', true);
+  document.getElementById('pw_old').value = '';
+  document.getElementById('pw_new').value = '';
+  toast('密码已修改，下次登录用新密码');
+}
+async function api(path, body){
+  // 用相对路径：反代把 /status 当基址时，/api/... 会被加成 /status/api/...
+  // 自己再补前缀就变成 /status/status/api/...，之前登录失败就是这个原因
+  const r = await fetch(path.replace(/^\/+/, ''), {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body || {})});
+  if(r.status === 401){ location.href = '/login'; return {error:'需要登录'}; }
+  // 会话过期时服务端会 302 到登录页，fetch 跟随后拿到的是 HTML，
+  // 这里必须识别出来，否则用户只会看到「保存失败」而不知道是掉线了。
+  const ct = r.headers.get('content-type') || '';
+  if(ct.indexOf('json') < 0){
+    toast('登录已过期，正在跳回登录页…', true);
+    setTimeout(() => { location.href = '/login'; }, 900);
+    return {error:'登录已过期'};
+  }
+  let j = {};
+  try{ j = await r.json(); }catch(e){ j = {error:'服务器返回异常（HTTP ' + r.status + '）'}; }
+  return j;
+}
+const _gel = document.getElementById.bind(document);
+const _DUMMY = {innerHTML: '', textContent: '', value: '', style: {},
+                classList: {add(){}, remove(){}}};
+document.getElementById = function (id) { return _gel(id) || _DUMMY; };
+// 反向代理带前缀时，页面里写死的 /report.md、/live/*.m3u 这些要补上
+// 反代会把基址（如 /status）拼在请求前面，所以页面里不能再写死以 / 开头的地址，
+// 统一去掉开头的斜杠，交给浏览器按当前目录解析
+document.querySelectorAll('a[href^="/"], form[action^="/"]').forEach(el => {
+  const attr = el.tagName === 'FORM' ? 'action' : 'href';
+  el.setAttribute(attr, el.getAttribute(attr).replace(/^\/+/, ''));
+});
+function el(id){ return _gel(id); }
+
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function ts(v){ if(!v) return '-'; return new Date(v*1000).toLocaleString('zh-CN',{hour12:false}); }
+function kb(n){ return n > 1048576 ? (n/1048576).toFixed(1)+' MB' : Math.round(n/1024)+' KB'; }
+function ago(v){ if(!v) return '从未';
+  const d = (Date.now()/1000 - v)/86400;
+  return d < 1 ? (Math.max(1, Math.round(d*24)) + ' 小时前') : (d.toFixed(1) + ' 天前'); }
+
+function render(o){
+  O = o;
+  try { renderInner(o); } catch (e) {
+    console.error('render 出错', e);
+    const n = el('head');
+    if (n) n.innerHTML = '<span class="bad">页面渲染出错：' + esc(e.message) +
+      '（数据接口正常，是前端 bug，把这条发给开发者）</span>';
+  }
+}
+
+function renderInner(o){
+  const c = o.counts || {};
+  document.getElementById('head').innerHTML =
+    '上次聚合：' + esc(o.last_run || '从未') + ' ｜ 耗时 ' + (o.elapsed || '-') + 's ｜ ' +
+    (o.running ? '<span class="warn">聚合中…</span>' : '空闲') +
+    (o.error ? ' ｜ <span class="bad">上次出错：' + esc(o.error) + '</span>' : '');
+
+  const lg = o.lastgood;
+  document.getElementById('lastgood').innerHTML = lg
+    ? ('上一次成功：' + esc(lg.t) + '，' + (lg.sites || '-') + ' 个站点（出问题就点右上「退回上一次成功」）')
+    : '还没有成功快照（跑完一轮正常聚合后生成）';
+
+  // 老报告没有 probed/queued 字段，用「在线+暂留+摘除」倒推，保证 35 = 25 + 10 对得上
+  const cProbed = c => {
+    const derived = (c.alive || 0) + (c.grace || 0) + (c.dead || 0);
+    // probed 为 0 但明明有在线站点 → 报告是旧格式/写错的，用倒推值
+    if (c.probed === null || c.probed === undefined) return derived;
+    if (c.probed === 0 && derived > 0) return derived;
+    return c.probed;
+  };
+  const cQueued = c => c.queued ?? Math.max(0, (c.seeds || 0) - cProbed(c));
+  // 去重后的条数：老报告没有 merged/deduped 就按 在线+暂留+摘除 反推
+  const cMerged = c => c.merged ?? ((c.alive || 0) + (c.grace || 0) + (c.dead || 0));
+  const cDedup = c => c.deduped ?? Math.max(0, cProbed(c) - cMerged(c));
+
+  const st = o.settings || {};
+  for(const k of ['active_max','merge_room','probe_budget','max_seeds','max_categories','embed_lives','stamp_name','douban_first','stamp_suffix','ext_default','ext_all','ltv_cms','bench_latency','bench_every','config_days','config_max_fail','auto_floor','max_configs','auto_promote','zero_bench','max_per_asset','live_max_test','live_active_n','live_drop_seg_bad','live_tomb_days','live_tomb_max_fail','bench_days','live_auto_promote','live_big_days','live_small_days','live_bench_days','speed_hours','interval_hours','live_lines_per','interval_mode','daily_at'])
+    if(document.getElementById('s_' + k)) document.getElementById('s_' + k).value = st[k] ?? '';
+  document.getElementById('daysHint').textContent = st.config_days || 5;
+
+  const p = o.profiles || {};
+  const as0 = o.assets || [];
+  const ex = o.ext || {};
+  const cfgsAll = o.configs || [];
+  const cfgMain = cfgsAll.filter(x => x.tier !== 'bench').length;
+  const liveCfgCount = cfgsAll.filter(x => ((x.stats || {}).lives || 0) > 0).length;
+  const extTotal = ex.total || 0;
+  const pct = n => extTotal ? Math.round(n * 100 / extTotal) + '%' : '0%';
+
+  document.getElementById('stats2').innerHTML =
+    '<tr><th style="width:110px">类别</th><th class="num" style="width:80px">数量</th><th>明细</th></tr>' +
+    `<tr><td><b>配置接口</b></td><td class="num"><b>${cfgsAll.length}</b></td>` +
+    `<td class="mut">主用 ${cfgMain} ｜ 备用 ${cfgsAll.length - cfgMain} ｜ 含直播 ${liveCfgCount}</td></tr>` +
+    `<tr><td><b>采集站点</b></td><td class="num"><b>${c.seeds ?? '-'}</b></td>` +
+    `<td class="mut">体检 <b>${cProbed(c)}</b>` +
+    (cDedup(c) ? ` → 去重 ${cMerged(c)}` : '') +
+    `（在线 <span class="ok">${c.alive}</span> ｜ 暂留 ${c.grace} ｜ 摘除 ${c.dead}）` +
+    ` ｜ 主用 ${c.active} ｜ 备用 ${c.bench}` +
+    (cDedup(c) ? ` ｜ 合并重复 ${cDedup(c)}` : '') +
+    (c.orphan ? ` ｜ 离源 ${c.orphan}` : '') +
+    (cQueued(c) ? ` ｜ 排队 ${cQueued(c)}` : '') + `</td></tr>` +
+    `<tr><td><b>扩展站点</b></td><td class="num"><b>${extTotal}</b></td>` +
+    `<td class="mut">jar ${ex.jar || 0} (${pct(ex.jar || 0)}) ｜ js ${ex.js || 0} (${pct(ex.js || 0)})` +
+    ` ｜ py ${ex.py || 0} (${pct(ex.py || 0)})` +
+    (ex.pan ? ` ｜ 网盘 ${ex.pan} 已剔除` : '') + `</td></tr>` +
+    `<tr><td><b>直播源</b></td><td class="num"><b>${(o.lives || {}).total || 0}</b></td>` +
+    `<td class="mut">地址数，展开成频道后按台测活排名</td></tr>` +
+    `<tr><td><b>输出</b></td><td class="num"><b>${(p.tvbox || {}).total || 0}</b></td>` +
+    `<td class="mut">默认档 ${(p.tvbox || {}).total || 0} 站（CMS ${(p.tvbox || {}).cms || 0} + 扩展 ${(p.tvbox || {}).ext || 0}）` +
+    ` ｜ 全能档 ${(p.all || {}).total || 0} 站 ｜ LibreTV ${(p.ltv || {}).sources || 0} 源</td></tr>`;
+
+  const rs = o.reasons || {counts: {}};
+  const mrs = o.mirrors || [];
+  const mb = document.getElementById('mirrorBox');
+  if (mb) mb.value = mrs.join('\n');
+  document.getElementById('mirrorCount').textContent = '（' + mrs.length + ' 个）';
+
+  const rl = o.rules || {};
+  const rlN = k => ((rl.rules || {})[k] || []).length;
+  document.getElementById('rulesInfo').innerHTML =
+    `判定规则来自 <code>data/rules.json</code>（改完下一轮聚合生效，不用重启）：` +
+    `网盘 spider <b>${rlN('pan_spiders')}</b> 条 ｜ 公告词 <b>${rlN('notice_names')}</b> 条 ｜ ` +
+    `凭据字段 <b>${rlN('credential_fields')}</b> 条 ｜ 名字替换规则 <b>${rlN('name_rules')}</b> 条`;
+  const WARN_TEXT = {
+    '依赖本机地址': ['依赖本机/内网地址', '站点指向 127.0.0.1 或局域网，别人的电视和服务器都用不了'],
+    '网盘或需要登录': ['网盘或要登录', 'spider 走网盘分享，或配置里带 token/cookie，客户端不解锁就用不了'],
+    '公告或推广': ['公告或推广', '名字就是公众号/加群/发布页，不是影视站'],
+    '配置无效': ['配置无效', 'api 或 key 缺失，配错了']
+  };
+  const gate = o.gate || {by_reason: {}};
+  const gateRows = Object.keys(gate.by_reason || {}).map(k =>
+    `<tr><td><b class="bad">${esc(k)}</b><div class="mut" style="font-size:11px">插件扫描</div></td>` +
+    `<td class="num"><b class="warn">${gate.by_reason[k]}</b></td></tr>`);
+  const rsRows = Object.keys(rs.counts || {}).map(k => {
+    const t = WARN_TEXT[k] || [k, ''];
+    return `<tr><td><b>${esc(t[0])}</b><div class="mut" style="font-size:11px">${esc(t[1])}</div></td>` +
+      `<td class="num"><b class="warn">${rs.counts[k]}</b></td></tr>`;
+  });
+  const gateN = Object.keys(gate.by_reason || {}).reduce((a, k) => a + gate.by_reason[k], 0);
+  document.getElementById('warnCount').textContent =
+    (rs.total || gateN) ? `（${rs.total || 0} 个站 + ${gateN} 个插件）` : '（没有问题）';
+  const allWarns = rsRows.concat(gateRows);
+  document.getElementById('warns').innerHTML =
+    allWarns.length
+      ? '<tr><th>原因</th><th class="num">数量</th></tr>' + allWarns.join('')
+      : '<tr><td class="mut">没有问题，这里是空的</td></tr>';
+
+  const eps = [
+    ['/tvbox.json', '默认档：CMS + jar + py（影视仓用这个）'],
+    ['/all.json', '全能档：CMS + jar + js + py（不含网盘）'],
+    ['/ltv.json', 'LibreTV 源列表'],
+    ['/tvbox-direct.json', '直连版（不走代理，排查用）'],
+    ['/live/cctv.m3u', '直播：央视 + 卫视，按清晰度/延迟排名'],
+    ['/live/other.m3u', '直播：其他频道（仅测活）'],
+    ['/live/cctv.json', '直播：TVBox lives 结构'],
+    ['/status', '本管理页'],
+    ['/report.md', '体检报告（人看）'],
+    ['/api/cmslog', '最近的 /cms 请求日志（排查）'],
+  ];
+  document.getElementById('endpoints').innerHTML =
+    '<tr><th>地址</th><th>用途</th></tr>' +
+    eps.map(([u, d]) => `<tr><td><a href="${u}" target="_blank"><code>${u}</code></a></td>` +
+      `<td class="mut">${d}</td></tr>`).join('');
+
+  const scoreOf = c => {
+    const st = c.stats || {};
+    return (st.cms || 0) + (st.jar || 0) + (st.js || 0) + (st.py || 0);
+  };
+  const allCfgs = (o.configs || []).slice().sort((a, b) => {
+    const ta = a.tier === 'bench' ? 1 : 0, tb = b.tier === 'bench' ? 1 : 0;
+    if (ta !== tb) return ta - tb;                 // 主用在前、备用在后
+    const sa = scoreOf(a), sb = scoreOf(b);
+    if (sa !== sb) return sb - sa;                 // 同组内按产出从多到少
+    return (a.name || '').localeCompare(b.name || '');
+  });
+  const liveCfgs = allCfgs.filter(c => ((c.stats || {}).lives || 0) > 0)
+    .sort((a, b) => ((b.stats || {}).lives || 0) - ((a.stats || {}).lives || 0));
+  const actCount = allCfgs.filter(x => x.tier !== 'bench').length;
+  const cfgs = allCfgs;
+  document.getElementById('cfgHead').textContent =
+    `主用 ${actCount} / 上限 ${o.config_limit || 10} ｜ 备用 ${allCfgs.length - actCount} ｜ 含直播 ${liveCfgs.length}`;
+  const cfgRow = (x) => {
+    const s0 = x.stats || {};
+    const stt = (x.ok === false && x.fail >= 1)
+      ? `<span class="bad">解析失败 ${x.fail}</span>`
+      : (x.ok === true ? '<span class="ok">正常</span>' : '<span class="warn">未解析</span>');
+    const bench = x.tier === 'bench';
+    const zero = !s0.cms && !s0.jar && !s0.js && !s0.py && !s0.lives;
+    const hasLive = (s0.lives || 0) > 0;
+    const kindTag = (((s0.cms || 0) + (s0.jar || 0) + (s0.js || 0) + (s0.py || 0)) > 0
+        ? '<span class="tag blue">点播</span>' : '') +
+      (hasLive ? `<span class="tag">直播${s0.lives}</span>` : '') +
+      (zero && x.ok === true ? '<span class="tag red">0 产出</span>' : '');
+    return `<tr><td class="name"><span>${esc(x.name)}</span>` +
+      `<div class="mut" style="font-size:11px;cursor:copy" onclick="copyText(\`${esc(x.url)}\`)"><code>${esc(shortUrl(x.url))}</code></div></td>` +
+      `<td>${kindTag}</td>` +
+      `<td class="num">${zero && x.ok === true ? '<b class="bad">0</b>' : (s0.cms || 0)}</td>` +
+      `<td class="num">${s0.jar || 0}</td><td class="num">${s0.js || 0}</td>` +
+      `<td class="num">${s0.py || 0}</td><td class="num">${x.latency || '-'}</td>` +
+      `<td class="mut">${ago(x.last)}</td><td>${stt}</td>` +
+      `<td class="ops"><button class="mini" onclick="syncOne(this,'${esc(x.url)}')">解析</button>` +
+      (bench
+        ? `<button class="mini" onclick="cfgTier('active','${esc(x.url)}')">启用</button>`
+        : `<button class="mini" onclick="cfgTier('bench','${esc(x.url)}')">停用</button>`) +
+      `<button class="mini" onclick="delConfig('${esc(x.url)}')">删除</button></td></tr>`;
+  };
+  const cfgHead2 = '<tr><th>配置地址</th><th>类型</th><th class="num">CMS</th><th class="num">jar</th>' +
+    '<th class="num">js</th><th class="num">py</th><th class="num">延迟</th>' +
+    '<th>上次解析</th><th>状态</th><th>操作</th></tr>';
+  const cfgActive = allCfgs.filter(x => x.tier !== 'bench');
+  const cfgBench = allCfgs.filter(x => x.tier === 'bench');
+  document.getElementById('benchConfigs').innerHTML = cfgHead2 +
+    (cfgBench.length ? cfgBench.map(cfgRow).join('')
+      : '<tr><td colspan="10" class="mut">没有备选配置接口</td></tr>');
+  document.getElementById('configs').innerHTML = cfgHead2 +
+    (cfgActive.length ? cfgActive.map(cfgRow).join('')
+      : '<tr><td colspan="10" class="mut">没有启用的配置接口</td></tr>');
+
+    document.getElementById('liveConfigs').innerHTML =
+    '<tr><th>配置地址</th><th class="num">直播地址数</th><th>上次解析</th><th>状态</th><th>操作</th></tr>' +
+    (liveCfgs.length ? liveCfgs.map(x => {
+      const n = (x.stats || {}).lives || 0;
+      const stt = (x.ok === false && x.fail >= 1)
+        ? `<span class="bad">解析失败 ${x.fail} 次</span>` : '<span class="ok">正常</span>';
+      return `<tr><td>${esc(x.name)}<div><code>${esc(x.url)}</code></div></td>` +
+        `<td class="num">${n}</td><td class="mut">${ago(x.last)}</td><td>${stt}</td>` +
+        `<td><button class="mini" onclick="syncOne(this,'${esc(x.url)}')">解析</button>` +
+        `<button class="mini" onclick="delConfig('${esc(x.url)}')">删除</button></td></tr>`;
+    }).join('') : '<tr><td colspan="5" class="mut">还没有产出直播源的配置</td></tr>');
+
+  const lv = o.lives || {total: 0, sample: []};
+  const lvItems = lv.items || lv.sample || [];
+  const lvHead = (() => {
+    const act = lv.active_count ?? 0, n = lv.active_n ?? 10, free = lv.free_slots ?? 0;
+    let t = `直播源 ${lv.total || 0} 个 ｜ 优选 ${act}/${n}`;
+    if (free > 0) {
+      t += lv.bench_best > 0
+        ? `（空 ${free} 个：备选最高 ${lv.bench_best} 台，未超过优选末位 ${lv.weakest} 台）`
+        : `（空 ${free} 个：备选源不满足优选条件，没有任何央视/卫视频道）`;
+    }
+    t += ` ｜ 备选 ${lv.bench_count ?? 0} 个（只做初筛，不参与解析）`;
+    if (lv.tested) {
+      t += `<br>可播台数：央视 <b>${lv.tested.cctv || 0}</b> ｜ 卫视 <b>${lv.tested.sat || 0}</b>` +
+           ` ｜ 港澳台 <b>${lv.tested.hmt || 0}</b> ｜ 地方台 <b>${lv.tested.local || 0}</b>` +
+           `（共 ${lv.tested.lines || 0} 条线路，已丢弃非大陆 ${lv.tested.dropped || 0} 类）`;
+    }
+    if (lv.tomb) t += ` ｜ 屏蔽/删除记录 ${lv.tomb} 条（每 15 天复检）`;
+    if (lv.seg_bad || lv.low_bps) {
+      t += ` ｜ <span class="mut">分片不可达 ${lv.seg_bad || 0} 条 / 低码率 ${lv.low_bps || 0} 条（排最后）</span>`;
+    }
+    return t;
+  })();
+  document.getElementById('liveSum').innerHTML = lvHead;
+  const liveState = x => {
+    if (x.blocked) return '<span class="tag red">已屏蔽</span>';
+    if (x.parse_err) return `<span class="tag">${esc(x.parse_err)}</span>`;
+    if (x.channels === null || x.channels === undefined) return '<span class="mut">未解析</span>';
+    if (!x.channels) return '<span class="tag">无频道</span>';
+    return '<span class="ok">正常</span>';
+  };
+  document.getElementById('lives').innerHTML =
+    '<tr><th>名称</th><th class="num">央视</th><th class="num">卫视</th>' +
+    '<th class="num">解析耗时</th><th>上次解析</th><th>状态</th><th>操作</th></tr>' +
+    (lvItems.length ? lvItems.map(x =>
+      `<tr${x.blocked ? ' class="dim"' : ''}><td class="name">` +
+      (x.tier === 'active' ? '<span class="tag blue">优选</span>'
+        : x.tier === 'blocked' ? '<span class="tag red">屏蔽</span>'
+        : '<span class="tag">备选</span>') + ' ' + esc(x.name || '') +
+      ` <span class="cp" title="复制直播源地址" onclick="copyText(\`${esc(x.url || '')}\`)">⧉</span>` +
+      (x.orphan ? `<span class="tag">离源</span>` : '') +
+      (x.from ? ` <span class="cp" title="复制来源地址" onclick="copyText(\`${esc(x.from)}\`)">↗</span>` : '') +
+      `</td>` +
+      `<td class="num">${x.cctv || 0}</td><td class="num">${x.sat || 0}</td>` +
+      `<td class="num mut">${x.parse_ms ? x.parse_ms + 'ms' : '-'}</td>` +
+      `<td class="mut">${x.parsed_at ? esc(x.parsed_at.slice(5, 16)) : '-'}</td>` +
+      `<td>${liveState(x)}</td>` +
+      `<td class="ops"><button class="mini" onclick="liveParse(this,'${esc(x.url)}')">立即解析</button>` +
+      `<button class="mini" onclick="liveBlock(this,'${esc(x.url)}',${x.blocked ? 0 : 1})">${x.blocked ? '解除' : '屏蔽'}</button>` +
+      `<button class="mini" onclick="liveDel(this,'${esc(x.url)}')">删除</button></td></tr>`).join('')
+      : '<tr><td colspan="7" class="mut">还没有直播源（解析配置时会顺带收集）</td></tr>');
+
+  const ov = o.overrides || {}, off = new Set(ov.disabled||[]),
+        pin = new Set(ov.pinned||[]), pend = new Set(o.pending||[]);
+  const extSites = o.ext_sites || {items: [], pan: []};
+  const speed = {};
+  (o.assets || []).forEach(a => { speed[a.asset] = a; });
+  const isGated = x => ((x.gate || {}).verdict === 'blocked');
+
+  const ORDER = {'默认': 0, '全能': 1, '直连': 2, 'LibreTV': 3};
+  const usedTags = u => (u && u.length)
+    ? u.slice().sort((a, b) => (ORDER[a] ?? 9) - (ORDER[b] ?? 9))
+        .map(x => `<span class="tag blue">${x}</span>`).join(' ')
+    : '<span class="mut">未使用</span>';
+
+  // 一行一个站点：地址收进 title，行高压到最小
+  function rowHtml(r) {
+    const cp = r.title
+      ? ` <span class="cp" title="点击复制地址：${esc(r.title)}" onclick="copyText(\`${esc(r.title)}\`)">⧉</span>`
+      : '';
+    return `<tr><td class="name" data-name="${esc(r.raw || '')}">${r.name}${r.tags || ''}${cp}</td>` +
+      `<td><span class="tag">${r.kind}</span></td>` +
+      `<td class="num">${r.metric || '-'}</td>` +
+      `<td>${r.status}</td><td>${usedTags(r.used)}</td>` +
+      `<td class="ops">${r.ops}</td></tr>`;
+  }
+
+  const CMS_OPS = s => (off.has(s.api)
+      ? `<button class="mini" onclick="act('disable','${esc(s.api)}')">启用</button>`
+      : `<button class="mini" onclick="act('disable','${esc(s.api)}')">禁用</button>`) +
+    `<button class="mini" onclick="act('probe','${esc(s.api)}')">重测</button>` +
+    `<button class="mini" onclick="act('remove','${esc(s.api)}')">删除</button>`;
+
+  function cmsRow(s) {
+    const tags = (s.searchable === 0 ? '<span class="tag red">不可搜</span>' : '') +
+      (pin.has(s.api) ? '<span class="tag blue">置顶</span>' : '') +
+      (off.has(s.api) ? '<span class="tag red">禁用</span>' : '');
+    const stt = off.has(s.api) ? '<span class="bad">已禁用</span>'
+      : (s.alive ? '<span class="ok">在线</span>'
+        : (s.grace ? '<span class="warn">暂留</span>' : '<span class="bad">故障</span>'));
+    return rowHtml({raw: s.name, name: esc(s.name), tags, kind: 'cms', metric: s.latency,
+                    status: stt, used: s.used, ops: CMS_OPS(s), title: s.api});
+  }
+
+  function benchRow(b) {
+    return rowHtml({raw: b.name, name: esc(b.name), kind: 'cms', metric: b.latency,
+      status: '<span class="warn">备选</span>', used: [],
+      ops: `<button class="mini" onclick="act('pin','${esc(b.api)}')">升为主用</button>`,
+      title: b.api});
+  }
+
+  function extRow(x, mode) {
+    // js/py 站点没有 jar，资源键是 api —— 之前只查 x.jar，导致它们永远显示「未测」
+    const sp = speed[x.jar || x.api] || {}, g = x.gate || {};
+    const kindTag = `<span class="tag">${x.kind}</span>`;
+    let stt;
+    if (g.verdict === 'blocked') stt = '<span class="bad">插件被拦截</span>';
+    else if (x.blocked) stt = '<span class="bad">已屏蔽</span>';
+    else if (sp.tested) stt = sp.ttfb ? '<span class="ok">可测</span>' : '<span class="warn">不可达</span>';
+    else stt = '<span class="mut">未测</span>';
+    const tags = x.pinned ? '<span class="tag blue">优先</span>' : '';
+    let ops = x.blocked
+      ? `<button class="mini" onclick="blockSite('${esc(x.name)}', false)">解除</button>`
+      : `<button class="mini" onclick="blockSite('${esc(x.name)}', true)">屏蔽</button>`;
+    // 「升为主用」只对不在用的站点有意义；已经在用/被拦截的不给这个按钮
+    if (mode === 'idle') {
+      ops = (x.pinned
+        ? `<button class="mini" onclick="pinSite('${esc(x.name)}', false)">取消优先</button>`
+        : `<button class="mini" onclick="pinSite('${esc(x.name)}', true)">升为主用</button>`) + ops;
+    }
+    return rowHtml({raw: x.name, name: esc(x.name), tags, kind: x.kind, metric: sp.ttfb,
+                    status: stt, used: x.used, ops, title: x.api || x.jar});
+  }
+
+  const extOk = extSites.items.filter(x => !x.blocked && !isGated(x));
+  const usedRows = (o.sources || []).map(cmsRow).concat(extOk.filter(x => x.used.length).map(x => extRow(x, 'used')));
+  const idleRows = (o.bench || []).map(benchRow).concat(extOk.filter(x => !x.used.length).map(x => extRow(x, 'idle')));
+  const byKindName = (a, b) => (a.kind || '').localeCompare(b.kind || '') ||
+                              (a.name || '').localeCompare(b.name || '', 'zh');
+  const mutedRows = extSites.items.filter(x => x.blocked).sort(byKindName).map(x => extRow(x, 'muted'));
+  const gatedRows = extSites.items.filter(x => !x.blocked && isGated(x)).sort(byKindName).map(x => extRow(x, 'gated'));
+
+  const head = '<tr><th>名称</th><th>类型</th><th class="num">延迟</th><th>状态</th>' +
+    '<th>被使用</th><th>操作</th></tr>';
+  // 左列 1..n/2，右列 n/2+1..n（不是两张卡并排，是同一张卡里的行分两列）
+  const twoCol = (rows, headHtml) => {
+    if (!rows.length) return `<table>${headHtml}</table>`;
+    if (rows.length < 8) return `<table>${headHtml}${rows.join('')}</table>`;
+    const half = Math.ceil(rows.length / 2);
+    return `<table>${headHtml}${rows.slice(0, half).join('')}</table>` +
+           `<table>${headHtml}${rows.slice(half).join('')}</table>`;
+  };
+  const LIMIT = 300;
+  const cap = (rows, total) => rows.length > LIMIT
+    ? rows.slice(0, LIMIT).join('') +
+      `<tr><td colspan="6" class="mut">共 ${total} 个，只显示前 ${LIMIT} 个；用筛选框缩小范围</td></tr>`
+    : rows.join('');
+
+  document.getElementById('srcCount').textContent = '（' + usedRows.length + ' 个在用）';
+  document.getElementById('sources').innerHTML =
+    usedRows.length ? twoCol(usedRows, head)
+      : `<table>${head}<tr><td colspan="6" class="mut">还没有数据</td></tr></table>`;
+
+  document.getElementById('benchCount').textContent = '（' + idleRows.length + ' 个）';
+  document.getElementById('bench').innerHTML =
+    idleRows.length ? twoCol(idleRows, head)
+      : `<table>${head}<tr><td colspan="6" class="mut">没有空闲站点</td></tr></table>`;
+
+  document.getElementById('muteCount').textContent =
+    '（屏蔽 ' + mutedRows.length + ' ｜ 拦截 ' + gatedRows.length + '）';
+  document.getElementById('muted').innerHTML =
+    mutedRows.length ? twoCol(mutedRows, head)
+      : `<table>${head}<tr><td colspan="6" class="mut">没有被屏蔽的站点</td></tr></table>`;
+  document.getElementById('muted2').innerHTML =
+    gatedRows.length ? twoCol(gatedRows, head)
+      : `<table>${head}<tr><td colspan="6" class="mut">没有被拦截的插件</td></tr></table>`;
+
+  const panSites = extSites.pan || [];
+  document.getElementById('panCount').textContent = '（' + panSites.length + ' 个）';
+  document.getElementById('pan').innerHTML = '<table>' +
+    '<tr><th>名称</th><th>类型</th><th>状态</th></tr>' +
+    (panSites.length ? panSites.map(x =>
+      `<tr><td class="name" title="${esc(x.api)}">${esc(x.name)}</td>` +
+      `<td><span class="tag">${x.kind}</span></td>` +
+      `<td class="mut">未接入</td></tr>`).join('')
+      : '<tr><td colspan="3" class="mut">没有识别到网盘站点</td></tr>') + '</table>';
+
+  applyFilters();
+
+  const acc = o.access || {rows: []};
+  document.getElementById('access').innerHTML =
+    '<tr><th>接口</th><th class="num">总次数</th><th class="num">今日</th><th class="num">唯一IP</th>' +
+    '<th class="num">流量</th><th class="num">均/次</th><th>最近</th><th>客户端 IP</th><th>客户端 UA</th></tr>' +
+    (acc.rows.length ? acc.rows.map(r => {
+      const hot = r.n > 500 ? ' <span class="tag red">高频</span>' : '';
+      return `<tr><td>${esc(r.label)}${hot}<div class="mut"><code>${esc(r.bucket)}</code></div></td>` +
+        `<td class="num">${r.n}</td><td class="num">${r.today}</td>` +
+        `<td class="num">${r.unik || 0}</td>` +
+        `<td class="num">${kb(r.bytes)}</td><td class="num">${kb(r.avg || 0)}</td>` +
+        `<td class="mut">${ts(r.last)}</td>` +
+        `<td class="mut">${(r.ip||[]).map(x => esc(x[0])+' ×'+x[1]).join('<br>') || '-'}</td>` +
+        `<td class="mut">${(r.ua||[]).map(x => esc(x[0])+'×'+x[1]).join('<br>')}</td></tr>`;
+    }).join('') : '<tr><td colspan="9" class="mut">还没有请求</td></tr>');
+
+  const ips = new Set();
+  (acc.rows || []).forEach(r => (r.ip || []).forEach(x => ips.add(x[0])));
+  document.getElementById('accSum').textContent =
+    `累计 ${acc.total || 0} 次请求 ｜ 出现过 ${ips.size} 个客户端 IP` +
+    (ips.size > 1 ? '（多个 IP 说明地址可能被传出去了）' : '');
+
+  const blk = o.block || {};
+  document.getElementById('blockNames').value = (blk.names||[]).join('\n');
+  document.getElementById('blockAssets').value = (blk.assets||[]).join('\n');
+}
+
+async function loadAll(){
+  try{
+    const r = await fetch('/api/overview');
+    if(r.status === 401){ location.href = '/login'; return; }
+    render(await r.json());
+  }catch(e){ document.getElementById('head').textContent = '读取失败：' + e; }
+  try{
+    const h = await (await fetch('/api/history')).json();
+    drawSpark(h.rows || []);
+  }catch(e){}
+}
+
+function drawSpark(rows){
+  const el = document.getElementById('spark');
+  if(!rows.length){ el.innerHTML=''; document.getElementById('sparkNote').textContent='还没有历史数据'; return; }
+  const w = 600, h = 64, max = Math.max(1, ...rows.map(r => r.alive || 0));
+  const pts = rows.map((r,i) => {
+    const x = rows.length === 1 ? w : i*w/(rows.length-1);
+    const y = h - (r.alive||0)*(h-6)/max - 3;
+    return x.toFixed(1)+','+y.toFixed(1);
+  }).join(' ');
+  el.innerHTML = `<polyline points="${pts}" fill="none" stroke="#1f883d" stroke-width="2"/>`;
+  const last = rows[rows.length-1];
+  document.getElementById('sparkNote').textContent =
+    `最近 ${rows.length} 轮 ｜ 在线 ${last.alive} ｜ 主站 ${last.active} ｜ 备选 ${last.bench} ｜ 平均延迟 ${last.avg_latency}ms`;
+}
+
+function tick(btn, label){
+  const t0 = Date.now(), old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = label;
+  const h = setInterval(() => {
+    btn.textContent = label + ' ' + Math.round((Date.now()-t0)/1000) + 's';
+  }, 400);
+  return () => { clearInterval(h); btn.disabled = false; btn.textContent = old; };
+}
+
+async function addSource(btn){
+  const url = document.getElementById('newUrl').value.trim();
+  const name = document.getElementById('newName').value.trim();
+  const box = document.getElementById('addResult');
+  if(!url) return toast('先填接口地址', true);
+  const done = tick(btn, '分析中');
+  box.innerHTML = '正在体检：拉列表 + 取分类 + 测搜索（10~20 秒）…';
+  try{
+    const r = await api('/api/source/add', {url, name});
+    if(r.error){ box.innerHTML = '<span class="bad">失败：' + esc(r.error) + '</span>'; return; }
+    const x = r.result || {};
+    box.innerHTML = (x.alive ? '<span class="ok">✓ 可用</span>' : '<span class="bad">✗ 不可用</span>') +
+      ` ｜ type=${x.type==null?'-':x.type} ｜ 延迟 ${x.latency}ms ｜ 分类 ${x.nclass} 个` +
+      ` ｜ 分类参数 ${esc(x.param||'-')} ｜ ${x.searchable?'可搜':'不可搜'}` +
+      ` ｜ ${esc(x.msg||'')}` +
+      (r.added ? '<br>已加入待聚合源（面板上标「待聚合」），点「立即重新聚合」或等下一轮生效。'
+               : '<br><span class="mut">这个地址已经在源列表里了。</span>');
+    if(x.alive) toast('已加入待聚合源');
+  }catch(e){ box.innerHTML = '<span class="bad">出错：' + e + '</span>'; }
+  finally{ done(); loadAll(); }
+}
+
+async function addConfig(btn){
+  const url = document.getElementById('cfgUrl').value.trim();
+  const name = document.getElementById('cfgName').value.trim();
+  const box = document.getElementById('cfgResult');
+  if(!url) return toast('先填配置地址', true);
+  const done = tick(btn, '拉取中');
+  box.innerHTML = '正在拉配置并解析（可能十几秒）…';
+  try{
+    const r = await api('/api/config/add', {url, name});
+    if(r.error){ box.innerHTML = '<span class="bad">失败：' + esc(r.error) + '</span>'; return; }
+    const s0 = (r.synced && r.synced.stats) || {};
+    box.innerHTML = '<span class="ok">✓ 已加入源库</span>' +
+      ` ｜ 延迟 ${(r.synced && r.synced.latency) || '-'}ms ｜ CMS ${s0.cms||0} ｜ jar ${s0.jar||0}` +
+      ` ｜ js ${s0.js||0} ｜ py ${s0.py||0}` +
+      `<br>新并入：CMS ${(r.synced && r.synced.added_cms) || 0} 个、扩展 ${(r.synced && r.synced.added_ext) || 0} 个。` +
+      '点「立即重新聚合」让它们上线。';
+    toast('配置源已加入');
+  }catch(e){ box.innerHTML = '<span class="bad">出错：' + e + '</span>'; }
+  finally{ done(); loadAll(); }
+}
+
+async function setTier(url, tier){
+  const r = await api(tier === 'active' ? '/api/config/promote' : '/api/config/demote', {url});
+  toast(r.error ? r.error : (tier === 'active' ? '已加入主线路' : '已下沉到备选库'), !!r.error);
+  loadAll();
+}
+
+function shortUrl(u) {
+  const s2 = String(u || '');
+  if (s2.length <= 46) return s2;
+  return s2.slice(0, 30) + '…' + s2.slice(-12);
+}
+
+function copyText(t) {
+  const done = () => toast('已复制：' + shortUrl(t));
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(t).then(done, () => toast('复制失败，请手动选中', true));
+    return;
+  }
+  const ta = document.createElement('textarea');
+  ta.value = t; document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); done(); } catch (e) { toast('复制失败', true); }
+  document.body.removeChild(ta);
+}
+
+async function cfgTier(tier, url){
+  const r = await api(tier === 'bench' ? '/api/config/demote' : '/api/config/promote', {url});
+  if(r.error) return toast(r.error, true);
+  toast(tier === 'bench' ? '已停用（不再并池）' : '已启用（下轮聚合并池）');
+  loadAll();
+}
+
+async function liveRun(mode){
+  const r = await api('/api/live/' + mode, {});
+  toast(r.error ? r.error : ({
+    both: '已开始：大聚合 + 小聚合（几分钟）',
+    big: '已开始大聚合：重新展开优选源的 TXT/M3U',
+    small: '已开始小聚合：只测线路',
+    screen: '已开始备选初筛：只解析频道数'
+  })[mode] || '已开始', !!r.error);
+}
+
+async function liveParse(btn, url){
+  btn.disabled = true;
+  const r = await api('/api/live/parse', {url});
+  toast(r.error ? r.error : '已开始解析这个源（只更新它自己，不重聚合）', !!r.error);
+  setTimeout(() => { btn.disabled = false; loadAll(); }, 4000);
+}
+
+async function liveBlock(btn, url, on){
+  const r = await api('/api/live/block', {url, on});
+  if(r.error) return toast(r.error, true);
+  toast(on ? '已屏蔽（保留记录，可随时解除）' : '已解除屏蔽');
+  loadAll();
+}
+
+async function liveDel(btn, url){
+  if(!confirm('从直播源列表里删掉这条？下次解析配置时如果配置里还有它，会重新加回来。')) return;
+  const r = await api('/api/live/delete', {url});
+  if(r.error) return toast(r.error, true);
+  toast('已删除');
+  loadAll();
+}
+
+async function saveMirrors(){
+  const box = document.getElementById('mirrorBox');
+  const items = (box.value || '').split('\n').map(x => x.trim()).filter(Boolean);
+  if(!items.length && !confirm('清空会恢复默认镜像，继续？')) return;
+  const r = await api('/api/mirrors', {mirrors: items});
+  if(r.error) return toast('保存失败：' + r.error, true);
+  toast('镜像已保存（' + r.mirrors.length + ' 个），立即生效');
+  loadAll();
+}
+
+async function resetMirrors(){
+  const r = await api('/api/mirrors', {mirrors: []});
+  toast('已恢复默认镜像（' + (r.mirrors || []).length + ' 个）');
+  loadAll();
+}
+
+async function scanBench(){
+  if(!confirm('逐个解析所有备选配置接口（只统计数量，不并池）。可能要好几分钟，继续？')) return;
+  const r = await api('/api/config/scan-bench', {});
+  toast(r.error ? r.error : '已开始解析备选配置接口，完成后刷新查看', !!r.error);
+}
+
+async function rebuildPool(){
+  if(!confirm('会把未启用配置接口解析出来的站点从池子里清掉，然后用启用接口重建并重新聚合。继续？')) return;
+  const r = await api('/api/purge/rebuild', {});
+  toast(r.error ? r.error : '重建已开始（先清理再拉取再聚合，约 10 分钟）', !!r.error);
+}
+
+async function gateScan(){
+  toast('开始扫描插件（首次要下载全部 jar，可能几分钟）…');
+  const r = await api('/api/jargate/scan', {});
+  toast(r.error ? r.error : '扫描已开始，稍后刷新', !!r.error);
+  setTimeout(loadAll, 60000);
+}
+
+async function pinSite(name, pinned){
+  const r = await api('/api/site/pin', {name, pinned});
+  if(r.error) return toast(r.error, true);
+  toast(pinned ? ('已设为优先：' + name) : ('已取消优先：' + name));
+  loadAll();
+}
+
+async function speedFiltered(tableId, btn){
+  const rows = visibleRows(tableId);
+  if(!rows.length) return toast('先筛选出要测的站点', true);
+  // jar 地址没有放进 DOM（为了让行紧凑），只传名字，后端反查资源
+  const names = rows.map(r => r.name);
+  const done = btn ? tick(btn, '测速中') : () => {};
+  toast(`正在测 ${names.length} 个站点的资源…`);
+  await api('/api/asset/speed', {names});
+  done();
+  setTimeout(loadAll, 8000);
+}
+
+async function blockFiltered(tableId){
+  const rows = visibleRows(tableId);
+  if(!rows.length) return toast('先筛选出要屏蔽的站点', true);
+  if(!confirm(`确定屏蔽这 ${rows.length} 个站点？下一轮聚合生效。`)) return;
+  const r = await api('/api/site/block', {names: rows.map(x => x.name)});
+  if(r.error) return toast(r.error, true);
+  toast(`已屏蔽 ${r.added} 个站点，点「立即重新聚合」生效`);
+  loadAll();
+}
+
+async function blockSite(name, blocked){
+  const r = await api('/api/site/block', {name, blocked});
+  if(r.error) return toast(r.error, true);
+  toast(blocked ? ('已屏蔽 ' + name + '，下一轮聚合生效') : ('已解除 ' + name));
+  loadAll();
+}
+
+async function speedAssets(){
+  toast('开始测速（只读前 512KB，约 1~3 分钟）…');
+  const r = await api('/api/asset/speed', {});
+  toast(r.error ? r.error : '测速已开始，稍后刷新', !!r.error);
+  setTimeout(loadAll, 30000);
+}
+
+async function liveRefresh(){
+  toast('正在重新测速，可能几分钟…');
+  const r = await api('/api/live/refresh', {});
+  toast(r.error ? r.error : '测速已开始，稍后刷新本页', !!r.error);
+  setTimeout(loadAll, 20000);
+}
+
+async function syncOne(btn, url){
+  if (btn && btn.disabled) return;
+  const done = btn ? tick(btn, '解析中') : () => {};
+  try{
+    const r = await api('/api/config/sync', {url});
+    if(r.error){ toast(r.error, true); return; }
+    const s0 = (r.synced && r.synced[0]) || {};
+    const st = s0.stats || {};
+    if(s0.ok === false){
+      toast('解析失败：' + (s0.error || '未知原因'), true);
+    }else if(!(st.cms||st.jar||st.js||st.py||st.lives)){
+      toast('解析完成，但这条线路没产出任何站点（可能已失效）', true);
+    }else{
+      toast(`解析完成 ｜ ${s0.latency}ms ｜ CMS ${st.cms||0} jar ${st.jar||0} js ${st.js||0} py ${st.py||0} 直播 ${st.lives||0}`);
+    }
+  }catch(e){ toast('请求出错：' + e.message, true); }
+  finally{ done(); loadAll(); }
+}
+async function syncAll(){
+  toast('正在重拉所有配置源…');
+  const r = await api('/api/config/sync', {});
+  if(r.error) return toast(r.error, true);
+  toast('完成 ' + (r.synced||[]).length + ' 个');
+  loadAll();
+}
+async function delConfig(url){
+  if(!confirm('从源库删除这个配置？\n' + url)) return;
+  const r = await api('/api/config/remove', {url});
+  toast(r.error ? r.error : '已删除', !!r.error);
+  loadAll();
+}
+
+async function act(action, url){
+  const map = {disable:'禁用', pin:'置顶', bench:'放备选'};
+  if(action === 'remove'){
+    if(!confirm('从待聚合源里删除？\n' + url)) return;
+    const r = await api('/api/source/remove', {url});
+    toast(r.error ? r.error : ('已删除（' + r.removed + ' 条）'), !!r.error);
+    return loadAll();
+  }
+  if(action === 'probe'){
+    toast('重测中，约 10~20 秒…');
+    const r = await api('/api/probe', {url});
+    const x = r.result || {};
+    toast(x.alive ? `可用 ｜ ${x.latency}ms ｜ 分类 ${x.nclass} ｜ ${x.searchable?'可搜':'不可搜'}`
+                  : ('不可用 ｜ ' + (x.msg||'')), !x.alive);
+    return loadAll();
+  }
+  const r = await api('/api/override', {url, action});
+  toast(r.error ? r.error : (map[action] + ' 已生效（下一轮聚合应用）'), !!r.error);
+  loadAll();
+}
+
+async function saveSettings(){
+  const body = {};
+  for(const k of ['interval_mode','daily_at','sort_mode','stamp_suffix']){
+    const el2 = document.getElementById('s_' + k);
+    if(el2) body[k] = (el2.value || '').trim();
+  }
+  for(const k of ['active_max','merge_room','probe_budget','max_seeds','max_categories','embed_lives','stamp_name','douban_first','stamp_suffix','ext_default','ext_all','ltv_cms','bench_latency','bench_every','config_days','config_max_fail','auto_floor','max_configs','auto_promote','zero_bench','max_per_asset','live_max_test','live_active_n','live_drop_seg_bad','live_tomb_days','live_tomb_max_fail','bench_days','live_auto_promote','live_big_days','live_small_days','live_bench_days','speed_hours','interval_hours','live_lines_per']){
+    const v = parseInt(document.getElementById('s_' + k).value, 10);
+    if(!isNaN(v)) body[k] = v;
+  }
+  const r = await api('/api/settings', body);
+  if(r.error) return toast('保存失败：' + r.error, true);
+  const sv = r.settings || {};
+  const mode = sv.interval_mode === 'daily'
+    ? `每天 ${sv.daily_at || '03:30'} 聚合`
+    : (Number(sv.interval_hours) > 0 ? `每 ${sv.interval_hours} 小时聚合` : '已关闭自动聚合');
+  toast(`已保存 ✓ ${mode} ｜ 默认档 ${sv.ext_default} 扩展站 ｜ 全能档 ${sv.ext_all} ｜ LibreTV ${sv.ltv_cms}`);
+  loadAll();
+}
+
+async function saveBlock(){
+  const names = document.getElementById('blockNames').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  const assets = document.getElementById('blockAssets').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  let r = await api('/api/block', {action:'set', field:'names', value:names});
+  if(r.error) return toast(r.error, true);
+  r = await api('/api/block', {action:'set', field:'assets', value:assets});
+  toast(r.error ? r.error : '屏蔽名单已保存，下一轮生效', !!r.error);
+  loadAll();
+}
+
+async function refreshRun(){
+  const r = await (await fetch('/refresh')).json();
+  toast(r.started ? '已开始重新聚合（约 3~5 分钟）' : ('没启动：' + (r.reason || r.error || '未知')), !r.started);
+  setTimeout(loadAll, 3000);
+}
+async function rollback(){
+  if(!confirm('退回到上一次成功的聚合结果？当前输出会被覆盖。')) return;
+  const r = await api('/api/rollback', {});
+  toast(r.error ? r.error : ('已退回：' + (r.sites || 0) + ' 个站点'), !!r.error);
+  loadAll();
+}
+
+render(BOOT);
+drawSpark([]);
+setInterval(loadAll, 20000);
+
+// ---------------------------------------------------------------- 分区导航
+const TABS = ['overview', 'vod', 'live', 'configs', 'settings', 'ops'];
+
+function showTab(name) {
+  if (!TABS.includes(name)) name = 'overview';
+  if (!document.querySelectorAll) return;
+  document.querySelectorAll('section[data-panel]').forEach(function (sec) {
+    sec.classList.toggle('on', sec.getAttribute('data-panel') === name);
+  });
+  document.querySelectorAll('.side nav a').forEach(function (a) {
+    a.classList.toggle('on', a.getAttribute('data-tab') === name);
+  });
+}
+
+function filterRows(id, q) {
+  FILTERS[id] = q || '';
+  applyFilter(id);
+}
+
+function applyFilter(id) {
+  const t = document.getElementById(id);
+  if (!t || !t.querySelectorAll) return;
+  const needle = (FILTERS[id] || '').trim().toLowerCase();
+  const rows = t.querySelectorAll('tr');
+  for (let i = 1; i < rows.length; i++) {
+    const hit = !needle || (rows[i].textContent || '').toLowerCase().indexOf(needle) >= 0;
+    rows[i].style.display = hit ? '' : 'none';
+  }
+}
+
+function applyFilters() {
+  Object.keys(FILTERS).forEach(applyFilter);
+}
+
+// 取某张表当前筛选出来的行（用于「重测筛选」「屏蔽筛选」）
+function visibleRows(id) {
+  const t = document.getElementById(id);
+  if (!t || !t.querySelectorAll) return [];
+  const rows = t.querySelectorAll('tr');
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i].style.display === 'none') continue;
+    const nameCell = rows[i].querySelector('.name');
+    if (nameCell) out.push({ el: rows[i], name: nameCell.getAttribute('data-name') || nameCell.textContent.trim() });
+  }
+  return out;
+}
+
+function oldFilterRows(id, q) {
+  const t = document.getElementById(id);
+  if (!t || !t.querySelectorAll) return;
+  const needle = (q || '').trim().toLowerCase();
+  const rows = t.querySelectorAll('tr');
+  for (let i = 1; i < rows.length; i++) {
+    const hit = !needle || (rows[i].textContent || '').toLowerCase().indexOf(needle) >= 0;
+    rows[i].style.display = hit ? '' : 'none';
+  }
+}
+
+function goto(tab) { location.hash = tab; showTab(tab); }
+
+if (window.addEventListener) {
+  window.addEventListener('hashchange', function () { showTab(location.hash.slice(1)); });
+}
+if (document.querySelectorAll) showTab(location.hash.slice(1) || 'overview');
+</script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+services:
+  tvbox-agg:
+    image: tvbox-agg:0.9
+    build: .
+    container_name: tvbox-agg
+    restart: unless-stopped
+    # host 网络：直播源里有不少纯 IPv6 地址，bridge 网络拿不到 IPv6，
+    # 测试时会把好源误判成死的。用 host 最省事。
+    network_mode: host
+    environment:
+      TZ: Asia/Shanghai
+      PORT: "5680"
+      # 写进配置里的对外地址：客户端要靠它访问本服务，不能写容器内的 127.0.0.1
+      BASE_URL: "${BASE_URL:-http://192.168.1.10:5680}"
+      # 管理页 / 写接口的令牌，务必改掉。留空则自动生成并打印在日志里
+      TOKEN: "${TOKEN:-}"
+      INTERVAL: "6"          # 每 6 小时自动重聚合
+      WORKERS: "4"           # 采集站对并发握手敏感，4 是实测平衡点
+      TIMEOUT: "20"
+      DROP_AFTER: "3"        # 连续失败 3 次才摘除
+      PROXY: "1"             # 站点 API 走 /cms/<key> 代理，翻好 t= 参数
+      MAX_ASSETS: "25"       # 全能档最多带几个扩展资源（jar/js/py）
+      MAX_JAR_SITES: "120"   # 扩展站点总数上限
+    volumes:
+      - ./data:/app/data
