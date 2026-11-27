@@ -160,6 +160,11 @@ docker compose pull && docker compose up -d
 git pull && docker compose up -d --build
 ```
 
+面板「设置 → 版本与更新」里可以**检查有没有新版本**（只查不升）。
+国内连不上 `ghcr.io` 时，在那一栏填个镜像/加速地址，例如
+`ghcr.nju.edu.cn/huueng/tvbox-agg`，检查会改从这里查——
+注意这只影响「检查」，真正 `pull` 还是按 compose 里写的地址走。
+
 `data/` 目录不受影响。**升级后第一次聚合会用新逻辑重跑一遍**，输出的站点顺序可能变化。
 
 ---

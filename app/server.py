@@ -35,6 +35,11 @@ import re
 import sys
 
 import state as ST
+
+# 版本号：发版时只改这里（面板、HTTP 头、更新检查都读它）
+VERSION = "0.9.1"
+REGISTRY = "ghcr.io"
+IMAGE_REPO = "huueng/tvbox-agg"
 import threading
 import concurrent.futures as cf
 import time
@@ -303,6 +308,85 @@ def auth_load():
         return {}
 
 
+# ---------------------------------------------------------------- 检查更新
+#
+# 只"查"，不自动升级：镜像不可变 + 手动 pull 才能回滚，这是故意的。
+# 查询顺序：官方 GHCR → 设置里的镜像/加速地址（国内经常只有镜像站通）。
+
+_UPDATE_CACHE = {"ts": 0.0, "data": None}
+
+
+def _semver(tag):
+    m = re.match(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$", str(tag or "").strip())
+    return tuple(int(x or 0) for x in m.groups()) if m else None
+
+
+def _registry_tags(host, repo, timeout=6):
+    """读镜像仓库的 tag 列表；拿不到返回 None（不通 / 仓库私有 / 格式不对）"""
+    base = "https://" + host
+    repo = (repo or IMAGE_REPO).strip("/")
+    for with_token in (False, True):
+        hdr = {}
+        if with_token:
+            try:
+                tk_url = "%s/token?scope=repository:%s:pull&service=%s" % (
+                    base, repo, host)
+                tk = json.loads(urllib.request.urlopen(tk_url, timeout=timeout).read())
+                if not tk.get("token"):
+                    continue
+                hdr["Authorization"] = "Bearer " + tk["token"]
+            except Exception:
+                continue
+        try:
+            req = urllib.request.Request(base + "/v2/%s/tags/list" % repo,
+                                         headers=hdr)
+            data = json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+            tags = [t for t in (data.get("tags") or []) if _semver(t)]
+            if tags:
+                return tags
+        except Exception:
+            continue
+    return None
+
+
+def check_update(mirror=""):
+    """当前版本 vs 镜像仓库里的最新版本（结果缓存 10 分钟）"""
+    now = time.time()
+    if _UPDATE_CACHE["data"] and now - _UPDATE_CACHE["ts"] < 600:
+        return _UPDATE_CACHE["data"]
+
+    sources = [("官方 GHCR", REGISTRY, IMAGE_REPO)]
+    raw = (mirror or "").strip()
+    if raw:
+        raw = raw.split("://", 1)[-1].rstrip("/")
+        if "/" in raw:
+            h, r = raw.split("/", 1)
+            sources.append(("镜像地址", h, r))
+        else:
+            sources.append(("镜像地址", raw, IMAGE_REPO))
+
+    tried = []
+    for label, host, repo in sources:
+        tags = _registry_tags(host, repo)
+        tried.append("%s %s：%s" % (label, host, "通" if tags else "不通"))
+        if not tags:
+            continue
+        best = max(tags, key=lambda t: _semver(t))
+        cur = _semver(VERSION) or (0, 0, 0)
+        out = {"ok": True, "current": VERSION, "latest": best.lstrip("v"),
+               "newer": _semver(best) > cur, "source": label, "host": host,
+               "tried": tried, "tags": sorted(set(tags), key=_semver)[-8:]}
+        _UPDATE_CACHE.update(ts=now, data=out)
+        return out
+
+    out = {"ok": False, "current": VERSION, "tried": tried,
+           "error": "镜像仓库都连不上，查不到最新版本",
+           "hint": "网络原因可以用镜像加速：在设置里填「镜像/加速地址」，"
+                   "例如 ghcr.nju.edu.cn/huueng/tvbox-agg"}
+    _UPDATE_CACHE.update(ts=now, data=out)
+    return out
+
+
 def auth_password_ok(pw):
     """校验密码：优先用 data/auth.json 里改过的，否则用环境变量 TOKEN"""
     doc = auth_load()
@@ -537,7 +621,7 @@ def cms_fetch(key, query_pairs):
 # ---------------------------------------------------------------- HTTP
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TVBoxAgg/0.9"
+    server_version = "TVBoxAgg/" + VERSION
     protocol_version = "HTTP/1.1"
 
     # ---- 工具
@@ -794,6 +878,16 @@ class Handler(BaseHTTPRequestHandler):
                     "dropped": len(doc.get("other") or {}),
                     "cost": doc.get("cost"),
                     "ts": doc.get("ts")})
+        if path == "/api/update/check":
+            if not self._auth_ok(q):
+                return self._send(401, {"error": "需要登录"})
+            try:
+                with open(os.path.join(self._data_dir(), "settings.json"),
+                          encoding="utf-8") as f:
+                    _s = json.load(f)
+            except Exception:
+                _s = {}
+            return self._send(200, check_update(str(_s.get("update_mirror") or "")))
         if path == "/api/access":
             return self._send(200, access_summary())
         if path == "/api/overview":
@@ -1846,7 +1940,7 @@ class Handler(BaseHTTPRequestHandler):
                 stamp = time.strftime("%m-%d %H:%M", time.localtime(newest))
             except Exception:
                 stamp = "?"
-            tpl = tpl.replace("__BUILD__", "构建 " + stamp)
+            tpl = tpl.replace("__BUILD__", "v%s · 构建 %s" % (VERSION, stamp))
             tpl = tpl.replace("__PREFIX__", getattr(self, "_prefix", "") or "")
             return tpl.replace("__BOOT__",
                                json.dumps(self._overview(), ensure_ascii=False))

@@ -416,6 +416,27 @@ td.ops .mini{margin-right:2px}
   <div style="margin-top:10px"><button class="pri" onclick="saveBlock()">保存名单</button></div>
 </div>
 
+<div class="card">
+  <h2>版本与更新</h2>
+  <div class="mut" style="font-size:11px;margin-bottom:8px">
+    只检查、不自动升级：镜像不可变，手动 <code>docker compose pull</code> 才能回滚。
+  </div>
+  <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">
+    <div>当前版本：<b id="verNow">-</b></div>
+    <button class="mini" onclick="checkUpdate(this)">检查更新</button>
+    <div id="verRes" class="mut" style="font-size:12px"></div>
+  </div>
+  <div class="si" style="margin-top:10px">
+    <span>镜像/加速地址</span>
+    <input id="s_update_mirror" type="text" style="width:280px"
+           placeholder="ghcr.nju.edu.cn/huueng/tvbox-agg">
+  </div>
+  <div class="mut" style="font-size:11px;margin-top:4px">
+    留空只查官方 <code>ghcr.io</code>。国内网络连不上时，填一个镜像/加速地址
+    （形如 <code>ghcr.nju.edu.cn/huueng/tvbox-agg</code>），检查更新会改从这里查。
+    <b>这只影响"检查"，真正拉镜像还是按你 compose 里写的地址走。</b>
+  </div>
+</div>
 </section>
     <section data-panel="ops"><div class="card">
   <h2>调用统计</h2>
@@ -540,7 +561,7 @@ function renderInner(o){
   const cDedup = c => c.deduped ?? Math.max(0, cProbed(c) - cMerged(c));
 
   const st = o.settings || {};
-  for(const k of ['active_max','merge_room','probe_budget','max_seeds','max_categories','embed_lives','stamp_name','douban_first','stamp_suffix','ext_default','ext_all','ltv_cms','bench_latency','bench_every','config_days','config_max_fail','auto_floor','max_configs','auto_promote','zero_bench','max_per_asset','live_max_test','live_active_n','live_drop_seg_bad','live_tomb_days','live_tomb_max_fail','bench_days','live_auto_promote','live_big_days','live_small_days','live_bench_days','speed_hours','interval_hours','live_lines_per','interval_mode','daily_at'])
+  for(const k of ['active_max','merge_room','probe_budget','max_seeds','max_categories','embed_lives','stamp_name','douban_first','stamp_suffix','ext_default','ext_all','ltv_cms','bench_latency','bench_every','config_days','config_max_fail','auto_floor','max_configs','auto_promote','zero_bench','max_per_asset','live_max_test','live_active_n','live_drop_seg_bad','live_tomb_days','live_tomb_max_fail','bench_days','live_auto_promote','live_big_days','live_small_days','live_bench_days','speed_hours','interval_hours','live_lines_per','interval_mode','daily_at','update_mirror'])
     if(document.getElementById('s_' + k)) document.getElementById('s_' + k).value = st[k] ?? '';
   document.getElementById('daysHint').textContent = st.config_days || 5;
 
@@ -976,6 +997,32 @@ async function addConfig(btn){
   finally{ done(); loadAll(); }
 }
 
+async function checkUpdate(btn){
+  const box = document.getElementById('verRes');
+  const done = tick(btn, '检查中');
+  box.innerHTML = '正在查镜像仓库…';
+  try{
+    const r = await api('/api/update/check');
+    if(r.error){
+      box.innerHTML = '<span class="warn">' + esc(r.error) + '</span>' +
+        (r.hint ? '<br><span class="mut" style="font-size:11px">' + esc(r.hint) + '</span>' : '') +
+        (r.tried ? '<br><span class="mut" style="font-size:11px">' + esc(r.tried.join(' ｜ ')) + '</span>' : '');
+      return;
+    }
+    document.getElementById('verNow').textContent = r.current;
+    if(r.newer){
+      box.innerHTML = '<span class="warn">有新版本 ' + esc(r.latest) + '</span>（当前 ' +
+        esc(r.current) + '，来源 ' + esc(r.source) + '）<br>' +
+        '<code>docker compose pull && docker compose up -d</code> ' +
+        '<span class="cp" title="复制升级命令" onclick="copyText(\'docker compose pull && docker compose up -d\')">⧉</span>';
+    }else{
+      box.innerHTML = '<span class="ok">已是最新</span>（' + esc(r.current) +
+        '，来源 ' + esc(r.source) + '）';
+    }
+  }catch(e){ box.innerHTML = '<span class="bad">出错：' + e + '</span>'; }
+  finally{ done(); }
+}
+
 function toggleBatch(){
   const b = document.getElementById('batchBox');
   b.style.display = (b.style.display === 'none') ? 'block' : 'none';
@@ -1233,7 +1280,7 @@ async function saveSettings(){
     const el2 = document.getElementById('s_' + k);
     if(el2) body[k] = (el2.value || '').trim();
   }
-  for(const k of ['active_max','merge_room','probe_budget','max_seeds','max_categories','embed_lives','stamp_name','douban_first','stamp_suffix','ext_default','ext_all','ltv_cms','bench_latency','bench_every','config_days','config_max_fail','auto_floor','max_configs','auto_promote','zero_bench','max_per_asset','live_max_test','live_active_n','live_drop_seg_bad','live_tomb_days','live_tomb_max_fail','bench_days','live_auto_promote','live_big_days','live_small_days','live_bench_days','speed_hours','interval_hours','live_lines_per']){
+  for(const k of ['active_max','merge_room','probe_budget','max_seeds','max_categories','embed_lives','stamp_name','douban_first','stamp_suffix','ext_default','ext_all','ltv_cms','bench_latency','bench_every','config_days','config_max_fail','auto_floor','max_configs','auto_promote','zero_bench','max_per_asset','live_max_test','live_active_n','live_drop_seg_bad','live_tomb_days','live_tomb_max_fail','bench_days','live_auto_promote','live_big_days','live_small_days','live_bench_days','speed_hours','interval_hours','live_lines_per','update_mirror']){
     const v = parseInt(document.getElementById('s_' + k).value, 10);
     if(!isNaN(v)) body[k] = v;
   }
