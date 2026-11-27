@@ -25,6 +25,15 @@
 
 ---
 
+## 直接使用官方镜像
+
+```bash
+docker pull ghcr.io/huueng/tvbox-agg:0.9
+```
+
+多架构（amd64 / arm64），由 GitHub Actions 自动构建。
+不想自己构建的话，下面 compose 里的 `build: .` 可以直接删掉。
+
 ## docker compose 部署
 
 ```bash

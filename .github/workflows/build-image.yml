@@ -1,0 +1,57 @@
+name: build-image
+
+# 打 tag 时自动构建并推到 GHCR；也可以手动触发
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # 多架构：NAS 里 amd64 和 arm64 都有
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 版本号：tag 是 v0.9 就用 0.9，同时打 latest；手动触发用日期
+      - name: 生成镜像标签
+        id: meta
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VER="${GITHUB_REF_NAME#v}"
+            echo "tags=${REGISTRY}/${IMAGE}:${VER},${REGISTRY}/${IMAGE}:latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=${REGISTRY}/${IMAGE}:dev-$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=TVBox Aggregator
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=LicenseRef-Proprietary
+            org.opencontainers.image.description=把零散的 TVBox 配置接口聚合成一份能用的配置
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

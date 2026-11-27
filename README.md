@@ -48,6 +48,14 @@
 
 ## 快速开始
 
+### 方式零：直接拉镜像
+
+```bash
+docker pull ghcr.io/huueng/tvbox-agg:0.9
+```
+
+镜像由 GitHub Actions 在打 tag 时自动构建（amd64 + arm64）。
+
 ### 方式一：docker compose（推荐）
 
 ```bash
