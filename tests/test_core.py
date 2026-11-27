@@ -578,6 +578,44 @@ class TestDoubanJar(unittest.TestCase):
             A._jar_has_douban = old
 
 
+class TestExportParse(unittest.TestCase):
+    """导出 txt 的解析要能容忍手改（TAB / 竖线 / 纯空格）"""
+
+    SAMPLE = (
+        "# 注释行\n"
+        "[接口]\n"
+        "主用\t某接口\thttps://a.com/1.json\n"
+        "备选\t\t\thttps://b.com/2.json\n"
+        "主用|竖线分隔\thttps://c.com/3.json\n"
+        "https://d.com/4.json\n"
+        "[设置]\n"
+        "config_days=5\n"
+        "interval_mode=daily\n"
+    )
+
+    def _p(self, text):
+        import server
+        return server.Handler._parse_export(text)
+
+    def test_parse_formats(self):
+        urls, _ = self._p(self.SAMPLE)
+        got = [(t, n, u) for t, n, u in urls]
+        self.assertEqual(got[0], ("active", "某接口", "https://a.com/1.json"))
+        self.assertEqual(got[1], ("bench", "", "https://b.com/2.json"))
+        self.assertEqual(got[2], ("active", "竖线分隔", "https://c.com/3.json"))
+        self.assertEqual(got[3][2], "https://d.com/4.json")   # 没写档位默认备选
+
+    def test_parse_settings(self):
+        _, stg = self._p(self.SAMPLE)
+        self.assertEqual(stg.get("config_days"), "5")
+        self.assertEqual(stg.get("interval_mode"), "daily")
+
+    def test_garbage_ignored(self):
+        urls, stg = self._p("随便写点什么\n[接口]\n不是地址的一行\n")
+        self.assertEqual(urls, [])
+        self.assertEqual(stg, {})
+
+
 class TestSiteKey(unittest.TestCase):
     """两个 key 函数不能互相覆盖（曾经因为同名，聚合直接崩）"""
 

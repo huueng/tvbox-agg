@@ -281,6 +281,25 @@ td.ops .mini{margin-right:2px}
     <button class="pri" onclick="addConfig(this)">拉取并加入</button>
     <button onclick="syncAll()">全部立即重拉</button>
   </div>
+
+  <div class="row" style="margin-top:8px">
+    <button class="mini" onclick="toggleBatch()">批量添加（最多 10 个）</button>
+    <button class="mini" onclick="exportCfg()">导出配置 txt</button>
+    <button class="mini" onclick="document.getElementById('impFile').click()">导入配置</button>
+    <input type="file" id="impFile" accept=".txt,text/plain" style="display:none"
+           onchange="importCfg(this)">
+  </div>
+  <div id="batchBox" style="display:none;margin-top:8px">
+    <textarea id="batchUrls" rows="6"
+      style="width:100%;box-sizing:border-box;font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px"
+      placeholder="每行一个配置地址，例如：&#10;https://xxx.com/config.json&#10;https://yyy.com/multi.json"></textarea>
+    <div class="mut" style="font-size:11px;margin:4px 0">
+      一次最多 <b>10</b> 个，换行分隔。超过 10 个时<b>只读前 10 个</b>，会在结果里提示忽略了几个。
+      加入后立即开始解析，10 个跑完要几分钟。
+    </div>
+    <button class="pri" onclick="addBatch(this)">添加并解析</button>
+  </div>
+
   <div id="cfgResult" class="mut" style="margin-top:10px"></div>
 
   <div class="row" style="margin:18px 0 8px;align-items:center">
@@ -943,20 +962,68 @@ async function addConfig(btn){
   const name = document.getElementById('cfgName').value.trim();
   const box = document.getElementById('cfgResult');
   if(!url) return toast('先填配置地址', true);
-  const done = tick(btn, '拉取中');
-  box.innerHTML = '正在拉配置并解析（可能十几秒）…';
+  const done = tick(btn, '添加中');
+  box.innerHTML = '正在加入并解析（后台进行，不会卡住页面）…';
   try{
     const r = await api('/api/config/add', {url, name});
     if(r.error){ box.innerHTML = '<span class="bad">失败：' + esc(r.error) + '</span>'; return; }
-    const s0 = (r.synced && r.synced.stats) || {};
     box.innerHTML = '<span class="ok">✓ 已加入源库</span>' +
-      ` ｜ 延迟 ${(r.synced && r.synced.latency) || '-'}ms ｜ CMS ${s0.cms||0} ｜ jar ${s0.jar||0}` +
-      ` ｜ js ${s0.js||0} ｜ py ${s0.py||0}` +
-      `<br>新并入：CMS ${(r.synced && r.synced.added_cms) || 0} 个、扩展 ${(r.synced && r.synced.added_ext) || 0} 个。` +
-      '点「立即重新聚合」让它们上线。';
+      '，后台正在解析（几分钟后看「采集站点」的数字）。' +
+      '<br>解析完点「立即重新聚合」让它们上线。';
+    document.getElementById('cfgUrl').value = '';
     toast('配置源已加入');
   }catch(e){ box.innerHTML = '<span class="bad">出错：' + e + '</span>'; }
   finally{ done(); loadAll(); }
+}
+
+function toggleBatch(){
+  const b = document.getElementById('batchBox');
+  b.style.display = (b.style.display === 'none') ? 'block' : 'none';
+  if(b.style.display === 'block') document.getElementById('batchUrls').focus();
+}
+
+async function addBatch(btn){
+  const el = document.getElementById('batchUrls');
+  const text = el.value.trim();
+  const box = document.getElementById('cfgResult');
+  if(!text) return toast('先贴配置地址', true);
+  const done = tick(btn, '添加中');
+  try{
+    const r = await api('/api/config/add', {urls: text});
+    if(r.error){
+      box.innerHTML = '<span class="bad">失败：' + esc(r.error) + '</span>';
+      return;
+    }
+    let msg = `<span class="ok">✓ 已加入 ${r.added.length} 个</span>，后台开始解析（几分钟）。`;
+    if(r.truncated) msg += `<br><span class="warn">超出上限 ${r.limit} 个，忽略了后面 ${r.truncated} 个。</span>`;
+    if(r.skipped && r.skipped.length){
+      msg += `<br>跳过 ${r.skipped.length} 个：` +
+        r.skipped.map(x => esc(x.why) + '（' + esc(shortUrl(x.url)) + '）').join('；');
+    }
+    box.innerHTML = msg;
+    el.value = '';
+    toast('已添加 ' + r.added.length + ' 个');
+  }catch(e){ box.innerHTML = '<span class="bad">出错：' + e + '</span>'; }
+  finally{ done(); loadAll(); }
+}
+
+function exportCfg(){ location.href = '/export.txt'; }
+
+async function importCfg(input){
+  const f = input.files && input.files[0];
+  if(!f) return;
+  try{
+    const text = await f.text();
+    const apply = confirm('要不要同时用文件里的设置覆盖当前设置？\n\n' +
+      '确定 = 接口和设置都导入\n取消 = 只导入接口，设置不动');
+    const r = await api('/api/config/import', {text, apply_settings: apply ? 1 : 0});
+    if(r.error) return toast('导入失败：' + r.error, true);
+    let msg = `导入完成：新增 ${r.added} 个接口，跳过 ${r.skipped} 个（已存在）`;
+    if(apply) msg += `，设置覆盖 ${r.settings_applied} 项`;
+    document.getElementById('cfgResult').innerHTML = '<span class="ok">✓ ' + esc(msg) + '</span>';
+    toast(msg);
+  }catch(e){ toast('导入出错：' + e, true); }
+  finally{ input.value = ''; loadAll(); }
 }
 
 async function setTier(url, tier){

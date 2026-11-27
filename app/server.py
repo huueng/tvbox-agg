@@ -31,6 +31,7 @@ import argparse
 import collections
 import json
 import os
+import re
 import sys
 
 import state as ST
@@ -723,6 +724,15 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/libretv.json", "/libretv", "/ltv.json", "/ltv"):
             access_hit("cfg:ltv", 0, self.headers.get("User-Agent", "")[:36], self._client_ip())
             return self._send(200, CACHE.get("ltv") or CACHE.get("libretv") or {})
+        if path in ("/export.txt", "/export"):
+            if not self._auth_ok(q):
+                return self._send(401, {"error": "需要登录"},
+                                  extra={"Location": self._loc("/login")})
+            access_hit("export", 0, self.headers.get("User-Agent", "")[:36],
+                       self._client_ip())
+            return self._send(200, self._export_txt(), "text/plain; charset=utf-8",
+                              {"Content-Disposition":
+                               'attachment; filename="%s"' % self.EXPORT_NAME})
         if path == "/report.json":
             return self._send(200, CACHE["report"])
         if path == "/report.md":
@@ -1116,6 +1126,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self._settings(body))
             if path == "/api/config/add":
                 return self._send(200, self._config_add(body))
+            if path == "/api/config/import":
+                return self._send(200, self._config_import(body))
             if path == "/api/config/sync":
                 return self._send(200, self._config_sync(body))
             if path == "/api/config/promote":
@@ -1467,12 +1479,28 @@ class Handler(BaseHTTPRequestHandler):
         saved = A.save_settings(cur, path)
         return {"ok": True, "settings": saved}
 
+    ADD_LIMIT = 10          # 一次最多加几个配置接口
+
     def _config_add(self, body):
-        url = (str(body.get("url") or "")).strip()
-        if not url.lower().startswith(("http://", "https://")):
+        """添加配置接口。支持一次贴多个（换行/空格/逗号分隔），上限 10 个
+
+        超过 10 个不报错，只取前 10 个，并明确告诉用户被截断了多少。
+        """
+        raw = body.get("urls")
+        if raw is None:
+            raw = body.get("url") or ""
+        if isinstance(raw, (list, tuple)):
+            raw = "\n".join(str(x) for x in raw)
+        items = [u.strip() for u in re.split(r"[\s,;]+", str(raw)) if u.strip()]
+
+        if not items:
             return {"ok": False, "error": "要填配置地址（http/https 开头）"}
-        if A.is_private(url):
-            return {"ok": False, "error": "内网地址不收"}
+
+        total = len(items)
+        truncated = max(0, total - self.ADD_LIMIT)
+        items = items[:self.ADD_LIMIT]
+
+        name = str(body.get("name") or "").strip()
         d = self._data_dir()
         path = os.path.join(d, "configs.json")
         try:
@@ -1480,19 +1508,54 @@ class Handler(BaseHTTPRequestHandler):
                 reg = json.load(f)
         except Exception:
             reg = {"configs": []}
-        urls = [(x.get("url") if isinstance(x, dict) else x) for x in reg["configs"]]
-        if url in urls:
-            return {"ok": False, "error": "这个配置已经在源库里了"}
-        reg["configs"].append({"name": str(body.get("name") or "").strip(),
-                               "url": url, "note": ""})
+        have = {(x.get("url") if isinstance(x, dict) else x) for x in reg["configs"]}
+
+        added, skipped = [], []
+        for u in items:
+            if not u.lower().startswith(("http://", "https://")):
+                skipped.append({"url": u, "why": "不是 http/https 地址"})
+                continue
+            if A.is_private(u):
+                skipped.append({"url": u, "why": "内网地址不收"})
+                continue
+            if u in have:
+                skipped.append({"url": u, "why": "已在源库里"})
+                continue
+            have.add(u)
+            # 多个一起加时名称自动带上序号，只有一个就用用户填的名字
+            nm = name if (name and len(items) == 1) else ""
+            reg["configs"].append({"name": nm, "url": u, "note": ""})
+            added.append({"url": u, "name": nm})
+
+        if not added:
+            return {"ok": False, "error": "没有可添加的地址", "skipped": skipped,
+                    "truncated": truncated, "limit": self.ADD_LIMIT}
+
         ST.save_file(path, reg)
-        if not CFG_SYNC_LOCK.acquire(blocking=False):
-            return {"ok": False, "error": "已有线路在解析，稍后再试"}
-        try:
-            res = A.sync_config_sources(d, CFG["seeds"], force=True, only=url)
-            return {"ok": True, "synced": res[0] if res else None}
-        finally:
-            CFG_SYNC_LOCK.release()
+
+        # 解析放到后台：10 个地址串行拉要好几分钟，不能让请求挂着
+        def _sync_new(urls):
+            for u in urls:
+                if not CFG_SYNC_LOCK.acquire(blocking=False):
+                    log("  [CFG] 有线路在解析，%s 稍后由定时任务补上" % u[-36:])
+                    continue
+                try:
+                    res = A.sync_config_sources(d, CFG["seeds"], force=True, only=u)
+                    r0 = (res or [{}])[0]
+                    log("  [CFG] 新增 %s → CMS %d"
+                        % (u[-36:], len((r0.get("stats") or {}).get("cms", [])
+                                        if isinstance((r0.get("stats") or {}).get("cms"), list)
+                                        else []) or (r0.get("stats") or {}).get("cms", 0)))
+                except Exception as e:            # noqa: BLE001
+                    log("  [CFG] 新增 %s 解析失败：%s" % (u[-36:], e))
+                finally:
+                    CFG_SYNC_LOCK.release()
+        threading.Thread(target=_sync_new,
+                         args=([x["url"] for x in added],), daemon=True).start()
+
+        return {"ok": True, "added": added, "skipped": skipped,
+                "truncated": truncated, "limit": self.ADD_LIMIT,
+                "total": total, "syncing": True}
 
     def _config_sync(self, body):
         url = str(body.get("url") or "").strip() or None
@@ -1504,6 +1567,126 @@ class Handler(BaseHTTPRequestHandler):
             return {"ok": True, "synced": res}
         finally:
             CFG_SYNC_LOCK.release()
+
+    EXPORT_NAME = "tvbox-agg-export.txt"
+
+    def _export_txt(self):
+        """导出人类可读的 txt：配置接口 + 设置
+
+        只导这两样是有意的：采集站/扩展站/直播源都能从接口重新拉，
+        导出去再导回来只会和池子里现有的重复。接口才是「根」。
+        """
+        d = self._data_dir()
+        try:
+            with open(os.path.join(d, "configs.json"), encoding="utf-8") as f:
+                cfgs = json.load(f).get("configs") or []
+        except Exception:
+            cfgs = []
+        act = [c for c in cfgs if isinstance(c, dict) and c.get("tier") != "bench"]
+        bnc = [c for c in cfgs if isinstance(c, dict) and c.get("tier") == "bench"]
+        try:
+            stg = A.load_settings(os.path.join(d, "settings.json"))
+        except Exception:
+            stg = {}
+
+        t = time.strftime("%Y-%m-%d %H:%M:%S")
+        out = [
+            "# TVBox 聚合器 · 配置导出",
+            "# 时间：%s ｜ 版本：0.9" % t,
+            "# 接口：%d 个（主用 %d ｜ 备选 %d）" % (len(cfgs), len(act), len(bnc)),
+            "#",
+            "# 只导出「配置接口 + 设置」。采集站/扩展站/直播源都能从接口重新拉取，",
+            "# 导出它们再导回来只会和池子里现有的重复，所以不导。",
+            "#",
+            "# 接口行格式：档位<TAB>名称<TAB>地址（可直接手改，导入时按地址去重）",
+            "# 想全部改成备选，把「主用」改成「备选」即可。",
+            "",
+            "[接口]",
+        ]
+        for c, tier in [(x, "主用") for x in act] + [(x, "备选") for x in bnc]:
+            out.append("%s\t%s\t%s" % (tier, c.get("name") or "", c.get("url") or ""))
+        out += ["", "# 设置项：key=value，导入时可选是否覆盖当前设置", "[设置]"]
+        for k in sorted(stg):
+            out.append("%s=%s" % (k, stg[k]))
+        out.append("")
+        return "\n".join(out)
+
+    @staticmethod
+    def _parse_export(text):
+        """解析导出文本：返回 (接口列表[(tier,name,url)], 设置 dict)"""
+        urls, stg, sec = [], {}, ""
+        for raw in (text or "").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                sec = line[1:-1].strip()
+                continue
+            if sec == "设置":
+                if "=" in line and not line.startswith("["):
+                    k, v = line.split("=", 1)
+                    stg[k.strip()] = v.strip()
+                continue
+            if sec != "接口":
+                continue
+            # 不管用 TAB、竖线还是空格分隔，都先从行里把 URL 抠出来，
+            # 剩下的部分再判断档位和名称 —— 这样用户手改格式也不会解析漏。
+            m = re.search(r"https?://[^\s|]+", line, re.I)
+            if not m:
+                continue
+            url = m.group(0).rstrip(",;、。")
+            rest = line.replace(url, "").strip(" \t|")
+            parts = [x.strip() for x in re.split(r"[\t|]+", rest) if x.strip()]
+            tier = "active" if parts and parts[0] in ("主用", "启用", "active") else "bench"
+            name = " ".join(parts[1:]) if len(parts) > 1 else ""
+            urls.append((tier, name, url))
+        return urls, stg
+
+    def _config_import(self, body):
+        """导入 txt：接口合并（跳过已存在），设置项可选覆盖"""
+        urls, stg = self._parse_export(str(body.get("text") or ""))
+        if not urls and not stg:
+            return {"ok": False, "error": "没解析到接口或设置，确认贴的是导出的 txt"}
+        d = self._data_dir()
+        path = os.path.join(d, "configs.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                reg = json.load(f)
+        except Exception:
+            reg = {"configs": []}
+        have = {(x.get("url") if isinstance(x, dict) else x) for x in reg["configs"]}
+        added, skipped = 0, 0
+        for tier, name, u in urls:
+            if u in have:
+                skipped += 1
+                continue
+            have.add(u)
+            reg["configs"].append({"name": name, "url": u, "note": "",
+                                   **({"tier": "bench"} if tier == "bench" else {})})
+            added += 1
+        if added:
+            ST.save_file(path, reg)
+
+        applied = 0
+        if stg and int(body.get("apply_settings") or 0):
+            sp = os.path.join(d, "settings.json")
+            try:
+                with open(sp, encoding="utf-8") as f:
+                    cur = json.load(f)
+            except Exception:
+                cur = {}
+            for k, v in stg.items():
+                if k not in A.SETTING_DEFAULTS:
+                    continue
+                dv = A.SETTING_DEFAULTS[k]
+                try:
+                    cur[k] = int(v) if isinstance(dv, int) else v
+                    applied += 1
+                except Exception:
+                    continue
+            ST.save_file(sp, cur)
+        return {"ok": True, "added": added, "skipped": skipped,
+                "settings_applied": applied, "settings_seen": len(stg)}
 
     def _config_remove(self, body):
         url = str(body.get("url") or "").strip()
