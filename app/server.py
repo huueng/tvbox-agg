@@ -37,7 +37,7 @@ import sys
 import state as ST
 
 # 版本号：发版时只改这里（面板、HTTP 头、更新检查都读它）
-VERSION = "0.9.1"
+VERSION = "0.9.2"
 REGISTRY = "ghcr.io"
 IMAGE_REPO = "huueng/tvbox-agg"
 import threading
@@ -782,6 +782,14 @@ class Handler(BaseHTTPRequestHandler):
         path, q, prefix = self._split_path()
         self._prefix = prefix
 
+        # 浏览器打开根路径是想看面板；TVBox 客户端（okhttp）要的是配置本身。
+        # 按 Accept 头区分，两边都不打扰。
+        if path == "/" and "text/html" in (self.headers.get("Accept") or "") \
+                and "okhttp" not in (self.headers.get("User-Agent") or "").lower():
+            # 注意这里不能用 _loc("/status")：它返回 "./"，
+            # 从根路径跳过去会解析回 "/"，又回到配置 JSON。
+            return self._send(302, "", "text/html; charset=utf-8",
+                              {"Location": (self._prefix or "") + "/status"})
         if path in ("/", "/tvbox.json", "/index.json", "/tvbox"):
             _txt = self._cfg_text("tvbox")
             access_hit("cfg:tvbox", len(_txt.encode("utf-8")),
@@ -1991,6 +1999,16 @@ def main():
         print("!! 警告：既没有 TOKEN 也没有设置面板密码，却监听 0.0.0.0 —— "
               "管理面板与写接口无鉴权。\n"
               "!! 内网自用可忽略；要暴露到公网请设置 TOKEN（如 openssl rand -hex 12）。")
+
+    # 全新部署时 data/ 可能是空的：先建目录、补一个空源库，
+    # 否则第一轮聚合会直接 FileNotFoundError（面板上显示「上次出错」）
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(a.seeds)), exist_ok=True)
+        os.makedirs(a.out, exist_ok=True)
+        if not os.path.exists(a.seeds):
+            A.dump_sources_doc(a.seeds, {"name": "自用聚合源", "sources": []})
+    except Exception as _e:
+        print("!! 初始化数据目录失败：%s" % _e)
 
     CFG.update(seeds=a.seeds, out=a.out, state=a.state, workers=a.workers,
                timeout=a.timeout, drop_after=a.drop_after, token=a.token,

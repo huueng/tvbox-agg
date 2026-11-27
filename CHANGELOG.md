@@ -2,9 +2,17 @@
 
 ## 未发布
 
-- compose 保持 host 网络为默认（能测纯 IPv6 直播源），另附 `docker-compose.bridge.yml`
-  给必须用端口映射的环境
 - 计划：把「镜像/加速地址」一并写进导出的备份文件
+
+## 0.9.2 — 2026-11-27
+
+- **修：全新部署第一轮聚合报 `FileNotFoundError: sources.json`**
+  空 `data/` 目录启动时会自己建目录和空源库，面板不再显示「上次出错」
+- **浏览器打开根路径自动跳面板**：`/` 在浏览器里 302 到 `/status`，
+  TVBox 客户端（okhttp）仍然拿到配置 JSON，两边不打扰
+- compose 里 `TOKEN` 的填法写清楚了：先跑 `openssl rand -hex 12` 再粘结果，
+  不要把命令本身当密码
+
 
 
 ## 0.9.1 — 2026-11-27

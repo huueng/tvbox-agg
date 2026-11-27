@@ -1,7 +1,7 @@
 # 直接复制到 Portainer / 群晖 / 飞牛「项目」里，也可以存成 docker-compose.yml 后 docker compose up -d
 #
 # 只有 TOKEN 建议改（面板密码），其余都可以不填。
-# 想固定版本：把 image 里的 latest 改成 0.9.1
+# 想固定版本：把 image 里的 latest 改成 0.9.2
 #
 # 用 host 网络：直播源里纯 IPv6 的不少（miguvideo 那批就是），
 # 端口映射模式下容器没有 v6，这些线路会被判成不可用。
@@ -16,8 +16,10 @@ services:
     volumes:
       - ./data:/app/data
     environment:
-      # 面板密码 / 写接口令牌。强烈建议填：openssl rand -hex 12
-      # 留空 = 不鉴权（内网自用可以，别暴露公网）
+      # 面板密码 / 写接口令牌。留空 = 不鉴权（内网自用可以，别暴露公网）
+      # 怎么填：先在命令行执行  openssl rand -hex 12  把输出的那串粘进去，例如
+      #         - TOKEN=3f9a1c7be04d2a8e6b51f0c3
+      # 注意：别把命令本身写进来 —— 那是一段文本，不是随机密码
       - TOKEN=${TOKEN:-}
       # 写进配置的对外地址。一般留空（自动用你访问时的地址）
       # 走反代或多网卡时再填，例如 http://你的设备地址:5680

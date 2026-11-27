@@ -2155,7 +2155,12 @@ def run_pipeline(seeds_path=None, out_dir=None, workers=3, timeout=20,
     state_path = state_path or os.path.join(HERE, "state.json")
     t0 = time.time()
 
-    seed_doc = json.load(open(seeds_path, encoding="utf-8"))
+    try:
+        with open(seeds_path, encoding="utf-8") as _sf:
+            seed_doc = json.load(_sf)
+    except Exception:
+        # 全新部署时 data/ 是空的，没有 sources.json 很正常，当空池处理
+        seed_doc = {"name": "自用聚合源", "sources": []}
     cfg_name = seed_doc.get("name") or "自用聚合源"
     overrides = load_overrides(os.path.join(
         os.path.dirname(os.path.abspath(seeds_path)), "overrides.json"))
