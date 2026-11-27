@@ -58,14 +58,15 @@ docker compose logs -f     # 看第一次聚合，约 3~10 分钟
 cp .env.example .env     # 可选，喜欢用 .env 就用
 ```
 
-### 端口映射版（没有 IPv6 需求 / Portainer 受限时）
+### 要测 IPv6 直播源：换 host 网络版
 
 ```bash
-docker compose -f docker-compose.bridge.yml up -d
+docker compose -f docker-compose.host.yml up -d
 ```
 
-默认版用 `host` 网络是为了拿到 IPv6——直播源里纯 v6 的地址不少，
-bridge 网络下这些线路会被判成不可用。
+默认版是**端口映射**，NAS 面板能显示端口，但容器里没有 IPv6；
+纯 v6 的直播线路会被判成不可用。host 网络版能测这些线路，
+代价是端口在面板里显示为空。
 
 ### 从源码构建
 

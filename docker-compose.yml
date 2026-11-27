@@ -1,14 +1,19 @@
-# 直接复制到 Portainer / 群晖「项目」里，或存成 docker-compose.yml 后 docker compose up -d
+# 直接复制到 Portainer / 群晖 / 飞牛「项目」里，也可以存成 docker-compose.yml 后 docker compose up -d
 #
 # 只有 TOKEN 建议改（面板密码），其余都可以不填。
-# 想固定版本：把 image 里的 latest 改成 0.9
+# 想固定版本：把 image 里的 latest 改成 0.9.1
+#
+# 用端口映射（而不是 host 网络）是为了让 NAS 面板能显示端口。
+# 代价：容器里拿不到 IPv6，纯 v6 的直播线路会测不出来，
+#      在意这个就改用 docker-compose.host.yml。
 services:
   tvbox-agg:
     image: ghcr.io/huueng/tvbox-agg:latest
     container_name: tvbox-agg
-    # host 网络：直播源里有不少纯 IPv6 地址，bridge 网络拿不到 IPv6，
-    # 会把好线路误判成死的。不想用 host 就换 docker-compose.bridge.yml
-    network_mode: host
+    restart: unless-stopped
+    ports:
+      # 左 = 宿主机对外端口（可以改），右 = 容器内监听端口（固定 5680，不要动）
+      - "${PORT:-5680}:5680"
     volumes:
       - ./data:/app/data
     environment:
@@ -18,9 +23,6 @@ services:
       # 写进配置的对外地址。一般留空（自动用你访问时的地址）
       # 走反代或多网卡时再填，例如 http://你的设备地址:5680
       - BASE_URL=${BASE_URL:-}
-      # 换端口：改这个值就行。host 网络下容器直接占用宿主端口，不需要 ports: 映射。
-      # 注意：BASE_URL 如果填了要跟着改，电视/客户端里的地址也要换。
-      - PORT=${PORT:-5680}
       - TZ=${TZ:-Asia/Shanghai}
       # 每 N 小时自动重聚合；0 = 只手动
       - INTERVAL=${INTERVAL:-6}
@@ -31,4 +33,3 @@ services:
       - PROXY=${PROXY:-1}
       - MAX_ASSETS=${MAX_ASSETS:-25}
       - MAX_JAR_SITES=${MAX_JAR_SITES:-120}
-    restart: unless-stopped

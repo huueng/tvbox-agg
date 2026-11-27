@@ -1,0 +1,30 @@
+# host 网络版：容器直接使用宿主机网络栈，能拿到 IPv6。
+#
+# 为什么需要它：不少直播源是纯 IPv6 地址，端口映射（bridge）模式下容器没有 v6，
+# 这些线路会被判成不可用、从输出里消失。要完整测这些线路就用本文件。
+#
+# 代价：端口列在 docker ps / NAS 面板里**显示为空**（host 网络不发布端口），
+#      实际监听端口就是下面的 PORT。
+#
+# 用法：docker compose -f docker-compose.host.yml up -d
+services:
+  tvbox-agg:
+    image: ghcr.io/huueng/tvbox-agg:latest
+    container_name: tvbox-agg
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TOKEN=${TOKEN:-}
+      - BASE_URL=${BASE_URL:-}
+      # host 网络下容器直接占用宿主端口，改这里就等于改端口
+      - PORT=${PORT:-5680}
+      - TZ=${TZ:-Asia/Shanghai}
+      - INTERVAL=${INTERVAL:-6}
+      - WORKERS=${WORKERS:-4}
+      - TIMEOUT=${TIMEOUT:-20}
+      - DROP_AFTER=${DROP_AFTER:-3}
+      - PROXY=${PROXY:-1}
+      - MAX_ASSETS=${MAX_ASSETS:-25}
+      - MAX_JAR_SITES=${MAX_JAR_SITES:-120}
