@@ -87,7 +87,7 @@ docker run -d --name tvbox-agg \
   --network host \
   --restart unless-stopped \
   -e TZ=Asia/Shanghai \
-  -e TOKEN=$(openssl rand -hex 12) \
+  -e TOKEN=改成你的密码 \
   -e INTERVAL=6 \
   -v /你的路径/tvbox-data:/app/data \
   ghcr.io/huueng/tvbox-agg:0.9
@@ -110,7 +110,7 @@ docker run -d --name tvbox-agg \
 | `PORT` | `5680` | 监听端口 |
 | `BIND` | `0.0.0.0` | 监听地址 |
 | `BASE_URL` | 空 | 写进输出配置的对外地址。**一般留空**（自动用访问时的 Host 推断）；反代或多网卡时再显式设置 |
-| `TOKEN` | 空 | 面板密码 / 写接口令牌。**留空且监听 0.0.0.0 = 无鉴权**，启动时会警告 |
+| `TOKEN` | 空 | 面板密码，填什么就是什么（普通字符即可）。**留空且监听 0.0.0.0 = 无密码**，启动时会警告 |
 | `INTERVAL` | `6` | 自动聚合间隔（小时），`0` = 只手动 |
 | `WORKERS` | `3` | 单轮并发。采集站对并发握手敏感，3~4 比较稳 |
 | `TIMEOUT` | `20` | 单个采集站超时（秒） |

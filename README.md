@@ -121,7 +121,7 @@ docker compose -f docker-compose.bridge.yml up -d
 docker run -d --name tvbox-agg \
   --network host \
   --restart unless-stopped \
-  -e TOKEN=$(openssl rand -hex 12) \
+  -e TOKEN=改成你的密码 \
   -v $PWD/data:/app/data \
   ghcr.io/huueng/tvbox-agg:latest
 ```

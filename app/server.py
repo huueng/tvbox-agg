@@ -37,7 +37,7 @@ import sys
 import state as ST
 
 # 版本号：发版时只改这里（面板、HTTP 头、更新检查都读它）
-VERSION = "0.9.2"
+VERSION = "0.9.3"
 REGISTRY = "ghcr.io"
 IMAGE_REPO = "huueng/tvbox-agg"
 import threading
@@ -1098,7 +1098,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/password":
                 old = str(body.get("old") or "")
                 new = str(body.get("new") or "")
-                if not auth_password_ok(old):
+                # 还没设过密码（TOKEN 也留空）时，没有"原密码"可验，
+                # 直接允许设置 —— 否则第一次在面板里设密码永远失败。
+                if auth_ready() and not auth_password_ok(old):
                     return self._send(200, {"ok": False, "error": "原密码不对"})
                 if len(new) < 6:
                     return self._send(200, {"ok": False, "error": "新密码至少 6 位"})

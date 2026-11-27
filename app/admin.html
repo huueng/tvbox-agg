@@ -376,6 +376,7 @@ td.ops .mini{margin-right:2px}
     <div class="si"><span>每几小时聚合(0=关闭)</span><input id="s_interval_hours" type="number" min="0" max="168"></div>
     <div class="si"><span>每天几点聚合</span><input id="s_daily_at" type="text" placeholder="03:30"></div>
   </div>
+  <div class="mut" id="rulesInfo" style="margin-top:12px;font-size:11px"></div>
   <div class="row" style="margin-top:12px">
     <button class="pri" onclick="saveSettings()">保存设置</button>
   </div>
@@ -384,8 +385,10 @@ td.ops .mini{margin-right:2px}
     <div><label>新密码（至少 6 位）</label><input id="pw_new" type="password" style="width:160px"></div>
     <button onclick="changePw()">修改管理密码</button>
   </div>
-  <div class="mut" id="rulesInfo" style="margin-top:14px;font-size:11px"></div>
-
+  <div class="mut" style="margin-top:6px;font-size:11px">
+    改完写进 <code>data/auth.json</code>，<b>优先于环境变量 TOKEN</b>。
+    忘了就删掉这个文件重启，会回到 TOKEN（没设则无密码）。
+  </div>
   <div style="margin-top:18px;border-top:1px solid var(--line);padding-top:14px">
     <h3 style="margin:0 0 6px;font-size:13px;color:#656d76">GitHub 镜像 <span class="mut" id="mirrorCount"></span></h3>
     <div class="mut" style="font-size:11px;margin-bottom:6px">
