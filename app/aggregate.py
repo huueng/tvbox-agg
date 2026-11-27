@@ -841,12 +841,12 @@ def check_jar(url, timeout=15):
 def load_block(path=None):
     """屏蔽名单：名字关键字 + 资源地址关键字
 
-    默认挡掉哔哩/B 站这类 UGC 站点——它们抓的是用户投稿，客厅场景不合适，
-    而且实测多数条目是失效的。可用 data/block.json 覆盖：
+    默认**空**：装好什么样就是什么样，不替用户做决定。
+    想挡掉某些站（比如哔哩/B 站这类 UGC，客厅场景多半用不上），在面板「站点屏蔽」里加，
+    或者写 data/block.json：
         {"names": ["哔哩", "B站", "bili"], "assets": []}
     """
-    default = {"names": ["哔哩", "B站", "bili", "bilibili"],
-               "assets": [], "pin": []}
+    default = {"names": [], "assets": [], "pin": []}
     if not path:
         path = os.path.join(HERE, "block.json")
     try:

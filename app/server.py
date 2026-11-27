@@ -37,7 +37,7 @@ import sys
 import state as ST
 
 # 版本号：发版时只改这里（面板、HTTP 头、更新检查都读它）
-VERSION = "0.9.3"
+VERSION = "0.9.4"
 REGISTRY = "ghcr.io"
 IMAGE_REPO = "huueng/tvbox-agg"
 import threading
@@ -1712,13 +1712,43 @@ class Handler(BaseHTTPRequestHandler):
         out += ["", "# 设置项：key=value，导入时可选是否覆盖当前设置", "[设置]"]
         for k in sorted(stg):
             out.append("%s=%s" % (k, stg[k]))
+
+        # 屏蔽名单：导入时合并去重，不会覆盖你现有的
+        try:
+            blk = A.load_block(os.path.join(d, "block.json"))
+        except Exception:
+            blk = {"names": [], "assets": []}
+        if blk.get("names") or blk.get("assets"):
+            out += ["", "# 站点屏蔽：名字关键字 / 资源地址关键字，导入时合并去重",
+                    "[屏蔽名单]"]
+            for x in blk.get("names") or []:
+                out.append("名字\t%s" % x)
+            for x in blk.get("assets") or []:
+                out.append("资源\t%s" % x)
+
+        # GitHub 镜像（加速前缀），导入时合并去重
+        try:
+            import discover as _D
+            mirs = _D.load_mirrors(d)
+        except Exception:
+            mirs = []
+        if mirs:
+            out += ["", "# GitHub 镜像前缀，一行一个，导入时合并去重", "[GitHub镜像]"]
+            out += list(mirs)
+
         out.append("")
         return "\n".join(out)
 
     @staticmethod
     def _parse_export(text):
-        """解析导出文本：返回 (接口列表[(tier,name,url)], 设置 dict)"""
+        """解析导出文本
+
+        返回 {"configs": [(tier,name,url)], "settings": {}, "block": {names,assets},
+              "mirrors": [...]}
+        """
         urls, stg, sec = [], {}, ""
+        block = {"names": [], "assets": []}
+        mirrors = []
         for raw in (text or "").splitlines():
             line = raw.strip()
             if not line or line.startswith("#"):
@@ -1730,6 +1760,17 @@ class Handler(BaseHTTPRequestHandler):
                 if "=" in line and not line.startswith("["):
                     k, v = line.split("=", 1)
                     stg[k.strip()] = v.strip()
+                continue
+            if sec == "屏蔽名单":
+                parts = [x.strip() for x in line.split("\t")]
+                if len(parts) >= 2 and parts[0] in ("名字", "资源") and parts[1]:
+                    block["names" if parts[0] == "名字" else "assets"].append(parts[1])
+                elif line:
+                    block["names"].append(line)     # 只写了关键字，当名字处理
+                continue
+            if sec == "GitHub镜像":
+                if line and not line.startswith("#"):
+                    mirrors.append(line)
                 continue
             if sec != "接口":
                 continue
@@ -1744,13 +1785,30 @@ class Handler(BaseHTTPRequestHandler):
             tier = "active" if parts and parts[0] in ("主用", "启用", "active") else "bench"
             name = " ".join(parts[1:]) if len(parts) > 1 else ""
             urls.append((tier, name, url))
-        return urls, stg
+        return {"configs": urls, "settings": stg,
+                "block": block, "mirrors": mirrors}
+
+    @staticmethod
+    def _uniq(items):
+        """按去空白 + 忽略大小写去重，保留原顺序"""
+        seen, out = set(), []
+        for x in items or []:
+            t = str(x or "").strip()
+            k = t.lower()
+            if t and k not in seen:
+                seen.add(k)
+                out.append(t)
+        return out
 
     def _config_import(self, body):
-        """导入 txt：接口合并（跳过已存在），设置项可选覆盖"""
-        urls, stg = self._parse_export(str(body.get("text") or ""))
-        if not urls and not stg:
-            return {"ok": False, "error": "没解析到接口或设置，确认贴的是导出的 txt"}
+        """导入 txt：接口/屏蔽/镜像都是合并去重，设置项可选覆盖"""
+        parsed = self._parse_export(str(body.get("text") or ""))
+        urls = parsed["configs"]
+        stg = parsed["settings"]
+        blk_in = parsed["block"]
+        mirs_in = parsed["mirrors"]
+        if not (urls or stg or blk_in["names"] or blk_in["assets"] or mirs_in):
+            return {"ok": False, "error": "没解析到内容，确认贴的是导出的 txt"}
         d = self._data_dir()
         path = os.path.join(d, "configs.json")
         try:
@@ -1789,8 +1847,42 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     continue
             ST.save_file(sp, cur)
+
+        # 屏蔽名单：合并去重（不删你现有的）
+        blk_added = 0
+        if blk_in["names"] or blk_in["assets"]:
+            bp = os.path.join(d, "block.json")
+            cur_blk = ST.load(d, "block.json", {"names": [], "assets": [], "pin": []})
+            before = set(self._uniq(cur_blk.get("names"))) | set(self._uniq(cur_blk.get("assets")))
+            names = self._uniq((cur_blk.get("names") or []) + blk_in["names"])
+            assets = self._uniq((cur_blk.get("assets") or []) + blk_in["assets"])
+            after = set(names) | set(assets)
+            blk_added = len(after - before)
+            cur_blk["names"], cur_blk["assets"] = names, assets
+            cur_blk.setdefault("pin", [])
+            ST.save_file(bp, cur_blk)
+
+        # GitHub 镜像：合并去重
+        mir_added = 0
+        if mirs_in:
+            try:
+                import discover as _D
+                cur_m = _D.load_mirrors(d)
+            except Exception:
+                cur_m = []
+            merged = self._uniq(cur_m + mirs_in)
+            mir_added = len(merged) - len(self._uniq(cur_m))
+            try:
+                import discover as _D
+                _D.set_mirrors(merged)
+                ST.save_file(os.path.join(d, "mirrors.json"),
+                             {"mirrors": _D.MIRRORS})
+            except Exception:
+                mir_added = 0
+
         return {"ok": True, "added": added, "skipped": skipped,
-                "settings_applied": applied, "settings_seen": len(stg)}
+                "settings_applied": applied, "settings_seen": len(stg),
+                "block_added": blk_added, "mirror_added": mir_added}
 
     def _config_remove(self, body):
         url = str(body.get("url") or "").strip()

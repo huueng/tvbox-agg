@@ -591,6 +591,12 @@ class TestExportParse(unittest.TestCase):
         "[设置]\n"
         "config_days=5\n"
         "interval_mode=daily\n"
+        "[屏蔽名单]\n"
+        "名字\t哔哩\n"
+        "资源\tbilibili.com\n"
+        "只写关键字\n"
+        "[GitHub镜像]\n"
+        "https://gh-proxy.com/{url}\n"
     )
 
     def _p(self, text):
@@ -598,22 +604,32 @@ class TestExportParse(unittest.TestCase):
         return server.Handler._parse_export(text)
 
     def test_parse_formats(self):
-        urls, _ = self._p(self.SAMPLE)
-        got = [(t, n, u) for t, n, u in urls]
+        got = self._p(self.SAMPLE)["configs"]
         self.assertEqual(got[0], ("active", "某接口", "https://a.com/1.json"))
         self.assertEqual(got[1], ("bench", "", "https://b.com/2.json"))
         self.assertEqual(got[2], ("active", "竖线分隔", "https://c.com/3.json"))
         self.assertEqual(got[3][2], "https://d.com/4.json")   # 没写档位默认备选
 
     def test_parse_settings(self):
-        _, stg = self._p(self.SAMPLE)
+        stg = self._p(self.SAMPLE)["settings"]
         self.assertEqual(stg.get("config_days"), "5")
         self.assertEqual(stg.get("interval_mode"), "daily")
 
     def test_garbage_ignored(self):
-        urls, stg = self._p("随便写点什么\n[接口]\n不是地址的一行\n")
-        self.assertEqual(urls, [])
-        self.assertEqual(stg, {})
+        r = self._p("随便写点什么\n[接口]\n不是地址的一行\n")
+        self.assertEqual(r["configs"], [])
+        self.assertEqual(r["settings"], {})
+
+    def test_parse_block_and_mirrors(self):
+        r = self._p(self.SAMPLE)
+        self.assertEqual(r["block"]["names"], ["哔哩", "只写关键字"])
+        self.assertEqual(r["block"]["assets"], ["bilibili.com"])
+        self.assertEqual(r["mirrors"], ["https://gh-proxy.com/{url}"])
+
+    def test_uniq_ignores_case_and_space(self):
+        import server
+        got = server.Handler._uniq(["bili", " BILI ", "哔哩", "", None, "bili"])
+        self.assertEqual(got, ["bili", "哔哩"])
 
 
 class TestSiteKey(unittest.TestCase):

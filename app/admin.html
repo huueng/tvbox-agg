@@ -1070,6 +1070,8 @@ async function importCfg(input){
     if(r.error) return toast('导入失败：' + r.error, true);
     let msg = `导入完成：新增 ${r.added} 个接口，跳过 ${r.skipped} 个（已存在）`;
     if(apply) msg += `，设置覆盖 ${r.settings_applied} 项`;
+    if(r.block_added) msg += `，屏蔽新增 ${r.block_added} 条`;
+    if(r.mirror_added) msg += `，镜像新增 ${r.mirror_added} 条`;
     document.getElementById('cfgResult').innerHTML = '<span class="ok">✓ ' + esc(msg) + '</span>';
     toast(msg);
   }catch(e){ toast('导入出错：' + e, true); }
