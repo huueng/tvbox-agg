@@ -4,8 +4,8 @@
 """直播源：解析、测活、测速、按台排名，输出 m3u / TVBox lives
 
 只做「直播源」这一层，不碰点播聚合。两个产出：
-  /live/cctv.m3u   央视 + 卫视，每台多条线路按（清晰度, 延迟）排序
-  /live/other.m3u  其它频道，只保留测活通过的
+  /cctv.m3u    央视 + 卫视，每台多条线路按（清晰度, 延迟）排序
+  /other.m3u   全量：央视 + 卫视 + 港澳台 + 地方台
 """
 
 import concurrent.futures as cf

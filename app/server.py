@@ -5,9 +5,11 @@
 """TVBox 聚合器 —— 常驻服务
 
 端点
-  GET  /                TVBox 单仓 JSON（客户端填这个）
-  GET  /tvbox.json      同上（显式别名）
-  GET  /libretv.json    LibreTV-SourceList v2（LibreTV 填这个）
+  GET  /tvbox           TVBox 单仓 JSON（默认档，客户端填这个）
+  GET  /tvbox-all       全能档（含 js）
+  GET  /libretv         LibreTV-SourceList v2（纯 CMS）
+  GET  /cctv.m3u        直播主（央视+卫视）
+  GET  /other.m3u       直播副（央视+卫视+港澳台+地方台）
   GET  /report.md       体检报告（人看）
   GET  /report.json     体检报告（机读）
   GET  /status          状态面板（HTML），带手动刷新按钮
@@ -37,7 +39,7 @@ import sys
 import state as ST
 
 # 版本号：发版时只改这里（面板、HTTP 头、更新检查都读它）
-VERSION = "0.9.6"
+VERSION = "0.9.7"
 REGISTRY = "ghcr.io"
 IMAGE_REPO = "huueng/tvbox-agg"
 import threading
@@ -863,27 +865,23 @@ class Handler(BaseHTTPRequestHandler):
             # 从根路径跳过去会解析回 "/"，又回到配置 JSON。
             return self._send(302, "", "text/html; charset=utf-8",
                               {"Location": (self._prefix or "") + "/status"})
-        # === 输出地址（规范地址只有这几个，其余是给老客户端留的兼容入口）===
-        #   /tvbox.json        默认档（CMS + jar + py）
-        #   /tvbox-all.json    全能档（CMS + jar + js + py）
-        #   /tvbox-direct.json 直连档（只 CMS，排查用）
-        #   /libretv.json      LibreTV 源（纯 CMS 列表，格式与 TVBox 不同，不能复用）
-        #   /cctv.m3u          直播主（央视 + 卫视）
-        #   /other.m3u         直播副（央视 + 卫视 + 港澳台 + 地方台）
-        # 兼容入口："/"（很多电视直接填根地址）、/live/cctv.m3u、/live/other.m3u
-        _CFG_ALIAS = {"/": "tvbox", "/tvbox.json": "tvbox",
-                      "/tvbox-all.json": "all",
-                      "/tvbox-direct.json": "direct"}
-        if path in _CFG_ALIAS:
-            key = _CFG_ALIAS[path]
-            if key != "tvbox" and not CACHE.get(key):
+        # === 输出地址（没有别名，没有重定向，写错就是 404）===
+        #   /tvbox        默认档（CMS + jar + py）
+        #   /tvbox-all    全能档（CMS + jar + js + py）
+        #   /libretv      LibreTV 源（纯 CMS 列表）
+        #   /cctv.m3u     直播主（央视 + 卫视）
+        #   /other.m3u    直播副（央视 + 卫视 + 港澳台 + 地方台）
+        _CFG = {"/tvbox": "tvbox", "/tvbox-all": "all"}
+        if path in _CFG:
+            key = _CFG[path]
+            if not CACHE.get(key):
                 return self._send(404, {"error": "%s 档还没生成" % key,
                                         "hint": "先跑一轮点播聚合"})
             _txt = self._cfg_text(key)
             access_hit("cfg:" + key, len(_txt.encode("utf-8")),
                        self.headers.get("User-Agent", "")[:36], self._client_ip())
             return self._send(200, _txt)
-        if path == "/libretv.json":
+        if path == "/libretv":
             access_hit("cfg:ltv", 0, self.headers.get("User-Agent", "")[:36],
                        self._client_ip())
             return self._send(200, CACHE.get("ltv") or CACHE.get("libretv") or {})
@@ -924,7 +922,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(401, {"error": "需要登录", "login": "/login"})
             return self._send(302, "", "text/html; charset=utf-8",
                               {"Location": self._loc("/login")})
-        if path.startswith("/live/") or path in ("/cctv.m3u", "/other.m3u"):
+        if path in ("/cctv.m3u", "/other.m3u"):
             try:
                 doc = live_doc(log=lambda *a: None)
             except Exception:
@@ -935,28 +933,20 @@ class Handler(BaseHTTPRequestHandler):
                 os.path.dirname(os.path.abspath(CFG["seeds"])), "settings.json"))
             per = int(stg.get("live_lines_per") or 5)
             drop_bad = bool(int(stg.get("live_drop_seg_bad", 1)))
-            # 主接口：/cctv.m3u（旧地址 /live/cctv.m3u 保留给已配置的电视）
-            if path in ("/cctv.m3u", "/live/cctv.m3u"):
+            if path == "/cctv.m3u":
                 access_hit("live:main", 0, self.headers.get("User-Agent", "")[:36],
                            self._client_ip())
                 return self._send(200, L.to_m3u(doc, "main", per, drop_bad),
                                   "audio/x-mpegurl; charset=utf-8")
-            # 副接口：/other.m3u = 全量（央视+卫视+港澳台+地方台），地方台每台 2 条
-            if path in ("/other.m3u", "/live/other.m3u", "/live/local.m3u"):
+            # 副接口 = 全量（央视+卫视+港澳台+地方台），地方台每台 2 条
+            if path == "/other.m3u":
                 access_hit("live:local", 0, self.headers.get("User-Agent", "")[:36],
                            self._client_ip())
                 return self._send(200, L.to_m3u(doc, None, per, drop_bad,
                                                local_lines=2),
                                   "audio/x-mpegurl; charset=utf-8")
-            if path == "/live/summary":
-                return self._send(200, {
-                    "total": doc.get("total"), "ok": doc.get("ok"),
-                    "cctv": len(doc.get("cctv") or {}),
-                    "sat": len(doc.get("sat") or {}),
-                    "local": len(doc.get("local") or {}),
-                    "dropped": len(doc.get("other") or {}),
-                    "cost": doc.get("cost"),
-                    "ts": doc.get("ts")})
+            return self._send(404, {"error": "没有这个地址",
+                                    "hint": "直播只有 /cctv.m3u 和 /other.m3u"})
         if path == "/api/update/check":
             if not self._auth_ok(q):
                 return self._send(401, {"error": "需要登录"})
@@ -1038,7 +1028,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, payload, ctype,
                               {"X-CMS-Cache": "hit" if cached else "miss"})
         return self._send(404, {"error": "not found", "path": path,
-                                "hint": "/tvbox.json /tvbox-all.json /libretv.json /cctv.m3u /other.m3u /status /refresh /cms/<key>"})
+                                "hint": "/tvbox /tvbox-all /libretv /cctv.m3u /other.m3u /status /refresh /cms/<key>"})
 
     def do_HEAD(self):
         return self.do_GET()
@@ -1059,8 +1049,10 @@ class Handler(BaseHTTPRequestHandler):
             if auth_password_ok(pw):
                 access_hit("login", 0, self.headers.get("User-Agent", "")[:36],
                            self._client_ip())
+                # 登录页在 /login，_loc("/status") 会算成 "./"（= 根路径），
+                # 而根路径现在不再输出配置了，必须给绝对地址
                 return self._send(302, "", "text/html; charset=utf-8",
-                                  {"Location": self._loc("/status"),
+                                  {"Location": (self._prefix or "") + "/status",
                                    "Set-Cookie": "agg_auth=%s; Path=/; HttpOnly; "
                                                  "SameSite=Lax; Max-Age=604800"
                                                  % auth_cookie_value()})
@@ -1521,18 +1513,26 @@ class Handler(BaseHTTPRequestHandler):
         直接从生成好的 out/*.json 反查，比在内存里推演配额更准。
         """
         m = {}
-        for label, fn in (("默认", "tvbox.json"), ("全能", "all.json"),
-                          ("直连", "tvbox-direct.json")):
+        for label, fn in (("默认", "tvbox.json"), ("全能", "all.json")):
             doc = ST.load(CFG["out"], fn, {})
             for s0 in doc.get("sites") or []:
                 if s0.get("key"):
                     m.setdefault(("key", s0["key"]), set()).add(label)
                 if s0.get("api"):
                     m.setdefault(("api", s0["api"]), set()).add(label)
-        doc = ST.load(CFG["out"], "ltv.json", {})
-        for s0 in doc.get("sources") or []:
-            if s0.get("url"):
-                m.setdefault(("api", s0["url"]), set()).add("LibreTV")
+        # cms（纯 CMS 输出）不能直接拿 site.api 比：开了 /cms 代理后，
+        # 输出里的 api 已经是 <base>/cms/<key>，和 LibreTV 里的上游地址对不上。
+        # 所以从 site_table 反查 key -> 上游 api，再和 ltv.json 的 url 比对。
+        try:
+            doc = ST.load(CFG["out"], "ltv.json", {})
+            ltv_urls = {str(x.get("url") or "").strip()
+                        for x in (doc.get("sources") or [])}
+            for k, (api, _p) in site_table().items():
+                if api and api in ltv_urls:
+                    m.setdefault(("key", k), set()).add("cms")
+                    m.setdefault(("api", api), set()).add("cms")
+        except Exception:
+            pass
         return m
 
     def _ext_sites(self):
@@ -2357,11 +2357,11 @@ def main():
     print("TVBox 聚合器服务启动", flush=True)
     print("  监听      %s:%s" % (a.bind, a.port), flush=True)
     _all = CACHE.get("all") or {}
-    print("  默认档    %s/tvbox.json        （%d 站：CMS+jar+py，影视仓用）"
+    print("  默认档    %s/tvbox            （%d 站：CMS+jar+py，影视仓用）"
           % (base, n_sites), flush=True)
-    print("  全能档    %s/tvbox-all.json    （%d 站：+js）"
+    print("  全能档    %s/tvbox-all        （%d 站：+js）"
           % (base, len(_all.get("sites") or [])), flush=True)
-    print("  LibreTV   %s/libretv.json      （%d 源，纯 CMS）" % (base, n_src), flush=True)
+    print("  纯 CMS    %s/libretv          （%d 源，LibreTV 用）" % (base, n_src), flush=True)
     print("  直播主    %s/cctv.m3u          （央视+卫视）" % base, flush=True)
     print("  直播副    %s/other.m3u         （央视+卫视+港澳台+地方台）" % base, flush=True)
     print("  面板      %s/status" % base, flush=True)

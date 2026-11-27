@@ -1,5 +1,34 @@
 # 更新日志
 
+## 0.9.7 — 2026-11-27
+
+**⚠️ 破坏性变更：输出地址全部换新，旧地址直接 404，没有重定向、没有兼容。**
+
+去掉了点播地址的 `.json` 后缀，并删掉所有历史别名。如果你电视/客户端里
+填的还是旧地址，请改成新地址，否则会拿不到配置。
+
+| 用途 | 新地址 | 旧地址（已删） |
+|---|---|---|
+| 默认档 | `/tvbox` | `/`、`/tvbox.json`、`/index.json`、`/tvbox` |
+| 全能档 | `/tvbox-all` | `/all.json`、`/tvbox-all.json` |
+| 纯 CMS | `/libretv` | `/libretv.json`、`/ltv.json`、`/ltv` |
+| 直播主 | `/cctv.m3u` | `/live/cctv.m3u`、`.m3u8` |
+| 直播副 | `/other.m3u` | `/live/other.m3u`、`/live/local.m3u`、`.m3u8` |
+
+另外删除：
+
+- `/tvbox-direct.json`（直连档）—— 只输出 CMS、不走 `/cms` 代理，本来是排查用；
+  和 `/libretv`（也是纯 CMS）职责重叠，且没有客户端在用，一并去掉
+- `/tvbox-full.json`、`/full.json`、`/tvbox-full` —— "全量档"是历史概念，内容与默认档完全相同
+- `/live/cctv.json`、`/live/local.json`、`/live/other.json` —— TVBox lives 结构，改用 m3u 后不再需要
+- `/live/summary` —— 面板已经从 `/api/overview` 拿直播状态
+- `/live/local.m3u8` 等所有 `.m3u8` 后缀
+
+**站点总表「被使用」列的 `直连` 标签改为 `cms`**，含义也变了：现在表示
+「这个站点出现在 `/libretv` 里」，对应的是纯 CMS 输出，不再是那个排查用的直连档。
+
+---
+
 ## 0.9.6 — 2026-11-27
 
 - **输出地址收敛**（删掉初期测试留下的重复别名）：

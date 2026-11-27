@@ -244,9 +244,8 @@ td.ops .mini{margin-right:2px}
   <h2>直播源（测活 + 测速，按台排名）</h2>
   <div class="mut" id="liveSum"></div>
   <div class="row" style="margin-top:8px">
-    <a class="btn" href="/live/cctv.m3u" target="_blank">央视+卫视 m3u</a>
-    <a class="btn" href="/live/local.m3u" target="_blank">地方台 m3u（副接口）</a>
-    <a class="btn" href="/live/cctv.json" target="_blank">TVBox lives</a>
+    <a class="btn" href="/cctv.m3u" target="_blank">直播主 cctv.m3u（央视+卫视）</a>
+    <a class="btn" href="/other.m3u" target="_blank">直播副 other.m3u（全量）</a>
     <button onclick="liveRefresh()">重新测速</button>
     <button class="pri" onclick="liveRun('both')">立即大聚合+小聚合</button>
     <button onclick="liveRun('big')">大聚合</button>
@@ -484,7 +483,7 @@ td.ops .mini{margin-right:2px}
     <section data-panel="ops"><div class="card">
   <h2>调用统计</h2>
   <div class="mut" style="margin-bottom:8px">
-    只统计<b>接口 json 的拉取次数</b>（/tvbox.json /all.json /ltv.json /live/*）。
+    只统计<b>接口 json 的拉取次数</b>（/tvbox /tvbox-all /libretv /cctv.m3u /other.m3u）。
     次数高说明这个地址真在被用；「唯一 IP」突然变多说明地址可能被传出去了。
   </div>
   <div class="mut" id="accSum" style="margin-bottom:8px"></div>
@@ -684,12 +683,11 @@ function renderInner(o){
       : '<tr><td class="mut">没有问题，这里是空的</td></tr>';
 
   const eps = [
-    ['/tvbox.json', '默认档：CMS + jar + py（影视仓填这个）'],
-    ['/tvbox-all.json', '全能档：CMS + jar + js + py'],
-    ['/libretv.json', 'LibreTV 源列表（纯 CMS，格式与 TVBox 不同）'],
+    ['/tvbox', '默认档：CMS + jar + py（影视仓填这个）'],
+    ['/tvbox-all', '全能档：CMS + jar + js + py'],
+    ['/libretv', '纯 CMS 列表（LibreTV 填这个）'],
     ['/cctv.m3u', '直播主：央视 + 卫视'],
     ['/other.m3u', '直播副：央视 + 卫视 + 港澳台 + 地方台'],
-    ['/tvbox-direct.json', '直连档：只 CMS 不走代理（排查用）'],
     ['/status', '本管理页'],
     ['/report.md', '体检报告（人看）'],
   ];
@@ -822,7 +820,7 @@ function renderInner(o){
   (o.assets || []).forEach(a => { speed[a.asset] = a; });
   const isGated = x => ((x.gate || {}).verdict === 'blocked');
 
-  const ORDER = {'默认': 0, '全能': 1, '直连': 2, 'LibreTV': 3};
+  const ORDER = {'默认': 0, '全能': 1, 'cms': 2};
   const usedTags = u => (u && u.length)
     ? u.slice().sort((a, b) => (ORDER[a] ?? 9) - (ORDER[b] ?? 9))
         .map(x => `<span class="tag blue">${x}</span>`).join(' ')

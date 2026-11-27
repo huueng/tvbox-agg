@@ -149,24 +149,20 @@ docker compose up -d --build
 
 设该服务地址为 `http://<你的设备IP>:5680`：
 
-**规范地址只有这几个**，其余都是历史别名，已经删掉：
+只有这几个地址，**没有别名、没有重定向**，写错就是 404：
 
 | 用途 | 地址 | 说明 |
 |---|---|---|
-| TVBox 默认档 | `/tvbox.json` | CMS + jar/py 扩展，影视仓填这个 |
-| TVBox 全能档 | `/tvbox-all.json` | 加上 js 扩展，站点更多 |
-| TVBox 直连档 | `/tvbox-direct.json` | 只有 CMS，不加载任何 jar（排查用） |
-| LibreTV | `/libretv.json` | 纯 CMS 列表，格式和 TVBox 不同，不能复用同一个文件 |
+| TVBox 默认档 | `/tvbox` | CMS + jar/py 扩展，影视仓填这个 |
+| TVBox 全能档 | `/tvbox-all` | 加上 js 扩展，站点更多 |
+| 纯 CMS | `/libretv` | LibreTV 等只吃 CMS 的客户端；格式与 TVBox 不同，不能复用 |
 | 直播主 | `/cctv.m3u` | 央视 + 卫视 |
 | 直播副 | `/other.m3u` | 央视 + 卫视 + 港澳台 + 地方台，每台 2 条 |
 | 体检报告 | `/report.json` `/report.md` | 每个站的状态、延迟、可播条数 |
 | 面板 | `/status` | 需要登录 |
 | 健康检查 | `/healthz` | 容器健康检查用 |
 
-兼容入口（老客户端可能还填着，保留但不推荐）：
-
-- `/` —— 等同 `/tvbox.json`，很多电视习惯直接填根地址
-- `/live/cctv.m3u`、`/live/other.m3u` —— 等同 `/cctv.m3u`、`/other.m3u`
+旧的 `/tvbox.json`、`/all.json`、`/ltv.json`、`/tvbox-direct.json`、`/live/*` 全部删除。
 
 ---
 

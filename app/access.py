@@ -21,12 +21,11 @@ BUCKET_ALIAS = {"cfg:tvbox": "cfg:tvbox", "cfg:full": "cfg:tvbox",
                 "live:main": "live:main", "live:cctv": "live:main",
                 "live:local": "live:local", "live:other": "live:local",
                 "login": "login"}
-BUCKET_LABEL = {"cfg:tvbox": "/tvbox.json（默认档）",
-                "cfg:all": "/all.json（全能档）",
-                "cfg:ltv": "/ltv.json（LibreTV）",
-                "cfg:direct": "/tvbox-direct.json（直连）",
-                "live:main": "/live/cctv.m3u（央视+卫视）",
-                "live:local": "/live/local.m3u（地方台）",
+BUCKET_LABEL = {"cfg:tvbox": "/tvbox（默认档）",
+                "cfg:all": "/tvbox-all（全能档）",
+                "cfg:ltv": "/libretv（纯 CMS）",
+                "live:main": "/cctv.m3u（央视+卫视）",
+                "live:local": "/other.m3u（全量）",
                 "login": "管理页登录"}
 
 ACCESS = {}                  # bucket -> {n, bytes, first, last, ua{}, hour{}, ip{}}

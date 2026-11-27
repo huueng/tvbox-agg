@@ -5,8 +5,10 @@
 """TVBox 源聚合器 —— 最小可用版
 
 链路：sources.json（种子） → 真实体检 → 合并去重 → 同时输出两份 profile
-      out/tvbox.json    TVBox 单仓 JSON（保留 type 0/1，可扩到 3）
-      out/libretv.json  LibreTV-SourceList v2（仅 type 1）
+      out/tvbox.json       TVBox 单仓 JSON（对外地址 /tvbox）
+      out/all.json         全能档（对外 /tvbox-all）
+      out/ltv.json         LibreTV-SourceList v2（对外 /libretv）
+      out/tvbox-direct.json 只 CMS 不走代理（内部用，不再对外）
       out/report.json / out/report.md  变更与过滤报告
 
 设计约束（见交接文档 §10）：
