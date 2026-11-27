@@ -1,6 +1,7 @@
 services:
   tvbox-agg:
-    image: tvbox-agg:0.9
+    # 官方镜像在 GHCR；本地改代码时 docker compose up -d --build 会用 build 覆盖
+    image: ghcr.io/huueng/tvbox-agg:0.9
     build: .
     container_name: tvbox-agg
     restart: unless-stopped

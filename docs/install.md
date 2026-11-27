@@ -58,7 +58,7 @@ docker run -d --name tvbox-agg \
   -e TOKEN=$(openssl rand -hex 12) \
   -e INTERVAL=6 \
   -v /你的路径/tvbox-data:/app/data \
-  tvbox-agg:0.9
+  ghcr.io/huueng/tvbox-agg:0.9
 ```
 
 > 用 `--network host` 而不是 `-p 5680:5680`：

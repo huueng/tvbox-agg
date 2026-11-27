@@ -77,7 +77,7 @@ docker run -d --name tvbox-agg \
   -e BASE_URL=http://192.168.1.10:5680 \
   -e TOKEN=$(openssl rand -hex 12) \
   -v $PWD/data:/app/data \
-  tvbox-agg:0.9
+  ghcr.io/huueng/tvbox-agg:0.9
 ```
 
 > `BASE_URL` 一定要填**客户端能访问到的地址**，不能是容器内的 `127.0.0.1`，
