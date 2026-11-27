@@ -94,10 +94,6 @@ docker compose logs -f      # 看第一次聚合，约 3~10 分钟
 打开 `http://<你的设备IP>:5680/status`。
 
 > **根路径 `/` 是配置文件**（TVBox 的接口地址直接填它），面板在 `/status`。
->
-> 默认 compose 用**端口映射**，NAS 面板（飞牛/群晖/Portainer）里能看到端口。
-> 代价是容器没有 IPv6——不在意纯 v6 直播源就用它；要完整体检 v6 线路，改用
-> `docker-compose.host.yml`。
 
 compose 里其他变量都有默认值，不用动：
 
@@ -108,16 +104,16 @@ compose 里其他变量都有默认值，不用动：
 | `PORT` | `5680` | host 网络下直接占用宿主端口 |
 | `INTERVAL` | `6` | 每几小时自动重聚合 |
 
-### 方式一·变体：要测 IPv6 直播源
+### 方式一·变体：必须用端口映射的环境
 
-换成 host 网络版：
+默认 compose 用 `host` 网络（为了能测纯 IPv6 的直播源，这类线路不少）。
+如果 host 网络用不了，或者一定要在 NAS 面板里看到端口：
 
 ```bash
-docker compose -f docker-compose.host.yml up -d
+docker compose -f docker-compose.bridge.yml up -d
 ```
 
-容器直接使用宿主网络，能解析纯 IPv6 的直播线路。
-代价：**端口在 NAS 面板里显示为空**（host 网络不发布端口），实际端口就是 `PORT`。
+代价：容器里没有 IPv6，纯 v6 的直播线路会被判成不可用。
 
 ### 方式二：一行 docker run
 

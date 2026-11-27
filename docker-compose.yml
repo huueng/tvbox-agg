@@ -3,17 +3,16 @@
 # 只有 TOKEN 建议改（面板密码），其余都可以不填。
 # 想固定版本：把 image 里的 latest 改成 0.9.1
 #
-# 用端口映射（而不是 host 网络）是为了让 NAS 面板能显示端口。
-# 代价：容器里拿不到 IPv6，纯 v6 的直播线路会测不出来，
-#      在意这个就改用 docker-compose.host.yml。
+# 用 host 网络：直播源里纯 IPv6 的不少（miguvideo 那批就是），
+# 端口映射模式下容器没有 v6，这些线路会被判成不可用。
+# 代价：NAS 面板的「端口」一栏是空的（host 网络不发布端口），
+#      实际端口就是下面的 PORT。必须用端口映射的话看 docker-compose.bridge.yml。
 services:
   tvbox-agg:
     image: ghcr.io/huueng/tvbox-agg:latest
     container_name: tvbox-agg
     restart: unless-stopped
-    ports:
-      # 左 = 宿主机对外端口（可以改），右 = 容器内监听端口（固定 5680，不要动）
-      - "${PORT:-5680}:5680"
+    network_mode: host
     volumes:
       - ./data:/app/data
     environment:
@@ -23,6 +22,9 @@ services:
       # 写进配置的对外地址。一般留空（自动用你访问时的地址）
       # 走反代或多网卡时再填，例如 http://你的设备地址:5680
       - BASE_URL=${BASE_URL:-}
+      # host 网络下容器直接占用宿主端口，改这里就等于改端口，
+      # 不需要 ports: 映射。改了记得同步 BASE_URL 和客户端里的地址。
+      - PORT=${PORT:-5680}
       - TZ=${TZ:-Asia/Shanghai}
       # 每 N 小时自动重聚合；0 = 只手动
       - INTERVAL=${INTERVAL:-6}

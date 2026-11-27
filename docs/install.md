@@ -58,15 +58,16 @@ docker compose logs -f     # 看第一次聚合，约 3~10 分钟
 cp .env.example .env     # 可选，喜欢用 .env 就用
 ```
 
-### 要测 IPv6 直播源：换 host 网络版
+### 必须用端口映射的环境
+
+默认 compose 用 `host` 网络（能测纯 IPv6 的直播源）。如果环境不允许 host 网络：
 
 ```bash
-docker compose -f docker-compose.host.yml up -d
+docker compose -f docker-compose.bridge.yml up -d
 ```
 
-默认版是**端口映射**，NAS 面板能显示端口，但容器里没有 IPv6；
-纯 v6 的直播线路会被判成不可用。host 网络版能测这些线路，
-代价是端口在面板里显示为空。
+代价：容器里没有 IPv6，纯 v6 的直播线路会被判成不可用、从输出里消失。
+另外 NAS 面板里 host 网络**不显示端口**，这是飞牛/群晖的显示限制，不影响使用。
 
 ### 从源码构建
 

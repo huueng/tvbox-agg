@@ -1,0 +1,25 @@
+# 端口映射版：host 网络用不了、或一定要在 NAS 面板里看到端口的，用这个。
+#
+# 代价：容器里没有 IPv6，纯 v6 的直播线路会被判成不可用、从输出里消失。
+# 用法：docker compose -f docker-compose.bridge.yml up -d
+services:
+  tvbox-agg:
+    image: ghcr.io/huueng/tvbox-agg:latest
+    container_name: tvbox-agg
+    restart: unless-stopped
+    ports:
+      # 左 = 宿主机对外端口（可以改），右 = 容器内监听端口（固定 5680，不要动）
+      - "${PORT:-5680}:5680"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TOKEN=${TOKEN:-}
+      - BASE_URL=${BASE_URL:-}
+      - TZ=${TZ:-Asia/Shanghai}
+      - INTERVAL=${INTERVAL:-6}
+      - WORKERS=${WORKERS:-4}
+      - TIMEOUT=${TIMEOUT:-20}
+      - DROP_AFTER=${DROP_AFTER:-3}
+      - PROXY=${PROXY:-1}
+      - MAX_ASSETS=${MAX_ASSETS:-25}
+      - MAX_JAR_SITES=${MAX_JAR_SITES:-120}

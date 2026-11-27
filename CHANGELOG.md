@@ -2,8 +2,8 @@
 
 ## 未发布
 
-- compose 默认改为**端口映射**，NAS 面板（飞牛/群晖/Portainer）能显示端口；
-  需要测 IPv6 直播源的改用 `docker-compose.host.yml`
+- compose 保持 host 网络为默认（能测纯 IPv6 直播源），另附 `docker-compose.bridge.yml`
+  给必须用端口映射的环境
 - 计划：把「镜像/加速地址」一并写进导出的备份文件
 
 
