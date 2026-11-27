@@ -164,6 +164,36 @@ git pull && docker compose up -d --build
 
 ---
 
+## 从旧版本（自建镜像）迁移到官方镜像
+
+数据格式向后兼容：**新容器挂同一个 `data/` 目录，设置、源库、直播线路全部照旧**。
+只多出一些新的设置项，会走默认值。
+
+```bash
+# 1. 备份（一定要做）
+cd /你的部署目录
+tar czf backup/pre-migrate-$(date +%F-%H%M).tgz data/
+
+# 2. 停掉旧的
+docker compose down
+
+# 3. 换成官方镜像的 compose（TOKEN 保留原值，data 挂载路径不变）
+docker compose up -d
+
+# 4. 确认数据还在
+curl -s http://127.0.0.1:5680/healthz
+```
+
+迁移后建议检查三处：
+
+| 检查 | 期望 |
+|---|---|
+| 面板 → 采集站点统计 | 站点数、直播源数和迁移前一致（±几个属正常浮动） |
+| `/live/cctv.m3u` 行数 | 和迁移前一致 |
+| 面板 → 设置 | 原来的设置项还在，新增项为默认值 |
+
+**回滚**：`docker compose down`，把备份的 `data/` 解回去，再启动旧镜像即可。
+
 ## 备份与迁移
 
 ```bash
