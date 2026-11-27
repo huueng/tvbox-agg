@@ -43,6 +43,7 @@ input[type=number]{width:92px}
 color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;display:none;z-index:99;
 box-shadow:0 4px 16px rgba(0,0,0,.2)}
 .spark{width:100%;height:64px}
+.setgrp{margin:20px 0 8px;font-size:12px;color:#656d76;border-bottom:1px solid var(--line);padding-bottom:6px}
 .set{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end}
 .setv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 28px}
 .si{display:flex;align-items:center;justify-content:space-between;gap:10px}
@@ -146,6 +147,7 @@ td.ops .mini{margin-right:2px}
       <a href="#live" data-tab="live">直播</a>
       <a href="#configs" data-tab="configs">配置接口</a>
       <a href="#settings" data-tab="settings">设置</a>
+      <a href="#board" data-tab="board">留言板</a>
       <a href="#ops" data-tab="ops">运维</a>
     </nav>
     <div class="side-foot"><button class="mini" onclick="logout()">退出登录</button></div>
@@ -157,7 +159,8 @@ td.ops .mini{margin-right:2px}
 <div class="card">
   <div class="row">
     <div class="mut" style="flex:1;min-width:200px">已登录（会话 7 天有效，换浏览器要重新输密码）</div>
-    <button class="pri" onclick="refreshRun()">立即重新聚合</button>
+    <button class="pri" onclick="refreshRun(this)">立即聚合 · 点播</button>
+    <button class="pri" onclick="refreshLive(this)">立即聚合 · 直播</button>
     <button onclick="rollback()">退回上一次成功</button>
     <a href="/report.md" target="_blank"><button>体检报告</button></a>
     <button onclick="logout()">退出登录</button>
@@ -284,10 +287,6 @@ td.ops .mini{margin-right:2px}
 
   <div class="row" style="margin-top:8px">
     <button class="mini" onclick="toggleBatch()">批量添加（最多 10 个）</button>
-    <button class="mini" onclick="exportCfg()">导出配置 txt</button>
-    <button class="mini" onclick="document.getElementById('impFile').click()">导入配置</button>
-    <input type="file" id="impFile" accept=".txt,text/plain" style="display:none"
-           onchange="importCfg(this)">
   </div>
   <div id="batchBox" style="display:none;margin-top:8px">
     <textarea id="batchUrls" rows="6"
@@ -333,53 +332,85 @@ td.ops .mini{margin-right:2px}
     术语对齐 TVBox：<b>采集站点</b>=type 0/1 的 CMS 接口；<b>扩展站点</b>=type 3（jar/js/py 承载）；
     <b>配置接口</b>=多仓/单仓 json。<b>输出站点数 = 采集站点 + 扩展站点</b>。
   </div>
+  <h3 class="setgrp">点播聚合</h3>
   <div class="setv">
     <div class="si"><span>默认档采集站点上限</span><input id="s_active_max" type="number" min="1" max="99"></div>
     <div class="si"><span>单配置一次最多并几条 CMS</span><input id="s_merge_room" type="number" min="1" max="200"></div>
     <div class="si"><span>每轮体检预算（探多少个源）</span><input id="s_probe_budget" type="number" min="5" max="500"></div>
     <div class="si"><span>采集源池上限</span><input id="s_max_seeds" type="number" min="10" max="1000"></div>
-    <div class="si"><span>每个站最多几个分类</span><input id="s_max_categories" type="number" min="1" max="60"></div>
-    <div class="si"><span>输出里带直播(1开/0关)</span><input id="s_embed_lives" type="number" min="0" max="1"></div>
-    <div class="si"><span>首个站点名加聚合时间(1开/0关)</span><input id="s_stamp_name" type="number" min="0" max="1"></div>
-    <div class="si"><span>直播优选源个数</span><input id="s_live_active_n" type="number" min="1" max="50"></div>
-    <div class="si"><span>分片取不到的线路不输出(1开/0关)</span><input id="s_live_drop_seg_bad" type="number" min="0" max="1"></div>
-    <div class="si"><span>直播源自动补位(1开/0关)</span><input id="s_live_auto_promote" type="number" min="0" max="1"></div>
-    <div class="si"><span>直播大聚合间隔(天)</span><input id="s_live_big_days" type="number" min="1" max="30"></div>
-    <div class="si"><span>直播小聚合间隔(天)</span><input id="s_live_small_days" type="number" min="1" max="7"></div>
-    <div class="si"><span>直播备选初筛间隔(天)</span><input id="s_live_bench_days" type="number" min="1" max="30"></div>
-    <div class="si"><span>屏蔽/删除的源多少天复检(天)</span><input id="s_live_tomb_days" type="number" min="1" max="90"></div>
-    <div class="si"><span>复检连续失败几次就真删</span><input id="s_live_tomb_max_fail" type="number" min="1" max="20"></div>
-    <div class="si"><span>备选接口初筛间隔(天)</span><input id="s_bench_days" type="number" min="1" max="30"></div>
+    <div class="si"><span>每个站最多几个分类 Tab</span><input id="s_max_categories" type="number" min="1" max="60"></div>
+    <div class="si"><span>单个扩展资源最多带几站</span><input id="s_max_per_asset" type="number" min="1" max="99"></div>
+    <div class="si"><span>进备选池的延迟阈值(ms)</span><input id="s_bench_latency" type="number" min="500" step="500"></div>
+    <div class="si"><span>备选池补探间隔(轮)</span><input id="s_bench_every" type="number" min="1" max="50"></div>
+  </div>
+
+  <h3 class="setgrp">输出</h3>
+  <div class="setv">
     <div class="si"><span>输出排序</span><select id="s_sort_mode" style="width:110px">
       <option value="kind">按资源类型</option>
       <option value="latency">按响应时间</option>
       <option value="name">按名称</option>
     </select></div>
     <div class="si"><span>首个站点用内置豆瓣(1开/0关)</span><input id="s_douban_first" type="number" min="0" max="1"></div>
+    <div class="si"><span>首个站点名加聚合时间(1开/0关)</span><input id="s_stamp_name" type="number" min="0" max="1"></div>
     <div class="si"><span>时间后面的文字</span><input id="s_stamp_suffix" type="text" style="width:110px" placeholder="豆瓣"></div>
     <div class="si"><span>默认档扩展站点数</span><input id="s_ext_default" type="number" min="0" max="600"></div>
     <div class="si"><span>全能档扩展站点数</span><input id="s_ext_all" type="number" min="0" max="600"></div>
     <div class="si"><span>LibreTV 输出 CMS 数</span><input id="s_ltv_cms" type="number" min="0" max="500"></div>
-    <div class="si"><span>进备选池的延迟阈值(ms)</span><input id="s_bench_latency" type="number" min="500" step="500"></div>
-    <div class="si"><span>备选池补探间隔(轮)</span><input id="s_bench_every" type="number" min="1" max="50"></div>
-    <div class="si"><span>单个扩展资源最多带几站</span><input id="s_max_per_asset" type="number" min="1" max="99"></div>
-    <div class="si"><span>启用的配置接口上限</span><input id="s_max_configs" type="number" min="1" max="200"></div>
-    <div class="si"><span>配置接口不足时自动补位(1开/0关)</span><input id="s_auto_promote" type="number" min="0" max="1"></div>
-    <div class="si"><span>配置连续几次 0 产出转备选</span><input id="s_zero_bench" type="number" min="1" max="9"></div>
-    <div class="si"><span>配置接口拉取间隔(天)</span><input id="s_config_days" type="number" min="1" max="90"></div>
-    <div class="si"><span>配置连续失败几次移除</span><input id="s_config_max_fail" type="number" min="1" max="20"></div>
-    <div class="si"><span>单配置产出低于此数退回备选</span><input id="s_auto_floor" type="number" min="1" max="50"></div>
-    <div class="si"><span>扩展资源测速间隔(小时)</span><input id="s_speed_hours" type="number" min="1" max="168"></div>
-    <div class="si"><span>直播每轮最多测几条线路</span><input id="s_live_max_test" type="number" min="100" max="20000" step="100"></div>
-    <div class="si"><span>每个台输出几条直播线路</span><input id="s_live_lines_per" type="number" min="1" max="20"></div>
-    <div class="si"><span>聚合周期(hours=每N小时 / daily=每天)</span><input id="s_interval_mode" type="text" placeholder="hours"></div>
-    <div class="si"><span>每几小时聚合(0=关闭)</span><input id="s_interval_hours" type="number" min="0" max="168"></div>
-    <div class="si"><span>每天几点聚合</span><input id="s_daily_at" type="text" placeholder="03:30"></div>
+    <div class="si"><span>输出里带直播(1开/0关)</span><input id="s_embed_lives" type="number" min="0" max="1"></div>
   </div>
+
+  <h3 class="setgrp">配置接口</h3>
+  <div class="setv">
+    <div class="si"><span>启用的配置接口上限</span><input id="s_max_configs" type="number" min="1" max="200"></div>
+    <div class="si"><span>接口不足时自动补位(1开/0关)</span><input id="s_auto_promote" type="number" min="0" max="1"></div>
+    <div class="si"><span>连续几次 0 产出转备选</span><input id="s_zero_bench" type="number" min="1" max="9"></div>
+    <div class="si"><span>产出低于此数退回备选</span><input id="s_auto_floor" type="number" min="1" max="50"></div>
+    <div class="si"><span>拉取间隔(天)</span><input id="s_config_days" type="number" min="1" max="90"></div>
+    <div class="si"><span>连续失败几次移除</span><input id="s_config_max_fail" type="number" min="1" max="20"></div>
+    <div class="si"><span>备选接口初筛间隔(天)</span><input id="s_bench_days" type="number" min="1" max="30"></div>
+  </div>
+
+  <h3 class="setgrp">直播</h3>
+  <div class="setv">
+    <div class="si"><span>优选源个数</span><input id="s_live_active_n" type="number" min="1" max="50"></div>
+    <div class="si"><span>源自动补位(1开/0关)</span><input id="s_live_auto_promote" type="number" min="0" max="1"></div>
+    <div class="si"><span>大聚合间隔(天)</span><input id="s_live_big_days" type="number" min="1" max="30"></div>
+    <div class="si"><span>小聚合间隔(天)</span><input id="s_live_small_days" type="number" min="1" max="7"></div>
+    <div class="si"><span>备选初筛间隔(天)</span><input id="s_live_bench_days" type="number" min="1" max="30"></div>
+    <div class="si"><span>每轮最多测几条线路</span><input id="s_live_max_test" type="number" min="100" max="20000" step="100"></div>
+    <div class="si"><span>每个台输出几条线路</span><input id="s_live_lines_per" type="number" min="1" max="20"></div>
+    <div class="si"><span>分片取不到的线路不输出(1开/0关)</span><input id="s_live_drop_seg_bad" type="number" min="0" max="1"></div>
+    <div class="si"><span>屏蔽/删除的源多少天复检</span><input id="s_live_tomb_days" type="number" min="1" max="90"></div>
+    <div class="si"><span>复检连续失败几次就真删</span><input id="s_live_tomb_max_fail" type="number" min="1" max="20"></div>
+  </div>
+
+  <h3 class="setgrp">全局</h3>
+  <div class="setv">
+    <div class="si"><span>聚合周期</span><select id="s_interval_mode" style="width:130px">
+      <option value="daily">每天某个时间</option>
+      <option value="hours">每 N 小时</option>
+    </select></div>
+    <div class="si"><span>每天几点聚合</span><input id="s_daily_at" type="text" placeholder="03:30" style="width:100px"></div>
+    <div class="si"><span>每几小时聚合(0=关闭)</span><input id="s_interval_hours" type="number" min="0" max="168"></div>
+    <div class="si"><span>扩展资源测速间隔(小时)</span><input id="s_speed_hours" type="number" min="1" max="168"></div>
+    <div class="si"><span>镜像/加速地址（检查更新用）</span><input id="s_update_mirror" type="text" style="width:280px" placeholder="ghcr.nju.edu.cn/huueng/tvbox-agg"></div>
+  </div>
+
   <div class="mut" id="rulesInfo" style="margin-top:12px;font-size:11px"></div>
   <div class="row" style="margin-top:12px">
     <button class="pri" onclick="saveSettings()">保存设置</button>
+    <span id="saveTip" class="mut" style="font-size:11px;margin-left:10px"></span>
   </div>
+  <div class="row" style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px;align-items:center">
+    <div style="margin-right:6px"><b>备份与恢复</b></div>
+    <button onclick="exportCfg()">导出配置 txt</button>
+    <button onclick="document.getElementById('impFile').click()">导入配置</button>
+    <input type="file" id="impFile" accept=".txt,text/plain" style="display:none"
+           onchange="importCfg(this)">
+    <span class="mut" style="font-size:11px">接口 / 设置 / 屏蔽名单 / GitHub 镜像，导入是合并去重</span>
+  </div>
+
   <div class="row" style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
     <div><label>原密码</label><input id="pw_old" type="password" style="width:160px"></div>
     <div><label>新密码（至少 6 位）</label><input id="pw_new" type="password" style="width:160px"></div>
@@ -429,16 +460,25 @@ td.ops .mini{margin-right:2px}
     <button class="mini" onclick="checkUpdate(this)">检查更新</button>
     <div id="verRes" class="mut" style="font-size:12px"></div>
   </div>
-  <div class="si" style="margin-top:10px">
-    <span>镜像/加速地址</span>
-    <input id="s_update_mirror" type="text" style="width:280px"
-           placeholder="ghcr.nju.edu.cn/huueng/tvbox-agg">
-  </div>
   <div class="mut" style="font-size:11px;margin-top:4px">
     留空只查官方 <code>ghcr.io</code>。国内网络连不上时，填一个镜像/加速地址
     （形如 <code>ghcr.nju.edu.cn/huueng/tvbox-agg</code>），检查更新会改从这里查。
     <b>这只影响"检查"，真正拉镜像还是按你 compose 里写的地址走。</b>
   </div>
+</div>
+</section>
+    <section data-panel="board"><div class="card">
+  <h2>留言板 <span class="mut">（匿名可发，管理员可回复/置顶）</span></h2>
+  <div class="row" style="margin-bottom:8px">
+    <div style="flex:1;min-width:160px"><input id="msgNick" maxlength="20" placeholder="昵称（可留空，默认「匿名」）"></div>
+    <div style="flex:3;min-width:260px"><input id="msgText" maxlength="500" placeholder="想说点什么…（最多 500 字）"
+      onkeydown="if(event.key==='Enter'){postMsg(this)}"></div>
+    <button class="pri" onclick="postMsg(this)">发布</button>
+  </div>
+  <div class="mut" style="font-size:11px;margin-bottom:12px">
+    同一个人 30 秒只能发一条、一天 30 条。留言只当纯文本处理，不会执行任何代码。
+  </div>
+  <div id="msgList"></div>
 </div>
 </section>
     <section data-panel="ops"><div class="card">
@@ -540,10 +580,18 @@ function render(o){
 
 function renderInner(o){
   const c = o.counts || {};
+  const lvst = o.live || {};
+  const liveTxt = lvst.running
+    ? `<span class="warn">${esc(lvst.mode || '直播聚合')}中 ${lvst.since || 0}s</span>`
+    : '空闲';
   document.getElementById('head').innerHTML =
-    '上次聚合：' + esc(o.last_run || '从未') + ' ｜ 耗时 ' + (o.elapsed || '-') + 's ｜ ' +
+    '<b>点播</b>：' + esc(o.last_run || '从未') +
+    ' ｜ 耗时 ' + (o.elapsed || '-') + 's ｜ ' +
     (o.running ? '<span class="warn">聚合中…</span>' : '空闲') +
-    (o.error ? ' ｜ <span class="bad">上次出错：' + esc(o.error) + '</span>' : '');
+    (o.error ? ' ｜ <span class="bad">上次出错：' + esc(o.error) + '</span>' : '') +
+    '<br><b>直播</b>：' + liveTxt +
+    ' ｜ 小聚合 ' + esc(lvst.last_small || '从未') +
+    ' ｜ 大聚合 ' + esc(lvst.last_big || '从未');
 
   const lg = o.lastgood;
   document.getElementById('lastgood').innerHTML = lg
@@ -640,9 +688,9 @@ function renderInner(o){
     ['/all.json', '全能档：CMS + jar + js + py（不含网盘）'],
     ['/ltv.json', 'LibreTV 源列表'],
     ['/tvbox-direct.json', '直连版（不走代理，排查用）'],
-    ['/live/cctv.m3u', '直播：央视 + 卫视，按清晰度/延迟排名'],
-    ['/live/other.m3u', '直播：其他频道（仅测活）'],
-    ['/live/cctv.json', '直播：TVBox lives 结构'],
+    ['/live/cctv.m3u', '直播主接口：央视 + 卫视（按清晰度/延迟排名）'],
+    ['/live/other.m3u', '直播副接口：央视 + 卫视 + 港澳台 + 地方台（全量）'],
+    ['/live/cctv.json', '直播 TVBox lives 结构（主接口同源）'],
     ['/status', '本管理页'],
     ['/report.md', '体检报告（人看）'],
     ['/api/cmslog', '最近的 /cms 请求日志（排查）'],
@@ -936,14 +984,21 @@ async function loadAll(){
 
 function drawSpark(rows){
   const el = document.getElementById('spark');
-  if(!rows.length){ el.innerHTML=''; document.getElementById('sparkNote').textContent='还没有历史数据'; return; }
+  if(!rows || !rows.length){
+    // 读不到时别把上一次的图擦掉：那个清空会让「历史轮次」看着时有时无
+    if(!el.dataset.drawn) document.getElementById('sparkNote').textContent = '还没有历史数据';
+    return;
+  }
+  el.dataset.drawn = '1';
   const w = 600, h = 64, max = Math.max(1, ...rows.map(r => r.alive || 0));
   const pts = rows.map((r,i) => {
     const x = rows.length === 1 ? w : i*w/(rows.length-1);
     const y = h - (r.alive||0)*(h-6)/max - 3;
     return x.toFixed(1)+','+y.toFixed(1);
   }).join(' ');
-  el.innerHTML = `<polyline points="${pts}" fill="none" stroke="#1f883d" stroke-width="2"/>`;
+  el.innerHTML = rows.length === 1
+    ? `<circle cx="${pts.split(',')[0]}" cy="${pts.split(',')[1]}" r="3" fill="#1f883d"/>`
+    : `<polyline points="${pts}" fill="none" stroke="#1f883d" stroke-width="2"/>`;
   const last = rows[rows.length-1];
   document.getElementById('sparkNote').textContent =
     `最近 ${rows.length} 轮 ｜ 在线 ${last.alive} ｜ 主站 ${last.active} ｜ 备选 ${last.bench} ｜ 平均延迟 ${last.avg_latency}ms`;
@@ -1281,11 +1336,11 @@ async function act(action, url){
 
 async function saveSettings(){
   const body = {};
-  for(const k of ['interval_mode','daily_at','sort_mode','stamp_suffix']){
+  for(const k of ['interval_mode','daily_at','sort_mode','stamp_suffix','update_mirror']){
     const el2 = document.getElementById('s_' + k);
     if(el2) body[k] = (el2.value || '').trim();
   }
-  for(const k of ['active_max','merge_room','probe_budget','max_seeds','max_categories','embed_lives','stamp_name','douban_first','stamp_suffix','ext_default','ext_all','ltv_cms','bench_latency','bench_every','config_days','config_max_fail','auto_floor','max_configs','auto_promote','zero_bench','max_per_asset','live_max_test','live_active_n','live_drop_seg_bad','live_tomb_days','live_tomb_max_fail','bench_days','live_auto_promote','live_big_days','live_small_days','live_bench_days','speed_hours','interval_hours','live_lines_per','update_mirror']){
+  for(const k of ['active_max','merge_room','probe_budget','max_seeds','max_categories','embed_lives','stamp_name','douban_first','stamp_suffix','ext_default','ext_all','ltv_cms','bench_latency','bench_every','config_days','config_max_fail','auto_floor','max_configs','auto_promote','zero_bench','max_per_asset','live_max_test','live_active_n','live_drop_seg_bad','live_tomb_days','live_tomb_max_fail','bench_days','live_auto_promote','live_big_days','live_small_days','live_bench_days','speed_hours','interval_hours','live_lines_per']){
     const v = parseInt(document.getElementById('s_' + k).value, 10);
     if(!isNaN(v)) body[k] = v;
   }
@@ -1295,7 +1350,11 @@ async function saveSettings(){
   const mode = sv.interval_mode === 'daily'
     ? `每天 ${sv.daily_at || '03:30'} 聚合`
     : (Number(sv.interval_hours) > 0 ? `每 ${sv.interval_hours} 小时聚合` : '已关闭自动聚合');
-  toast(`已保存 ✓ ${mode} ｜ 默认档 ${sv.ext_default} 扩展站 ｜ 全能档 ${sv.ext_all} ｜ LibreTV ${sv.ltv_cms}`);
+  const now = new Date().toLocaleTimeString('zh-CN', {hour12:false});
+  const msg = `已保存 ${now} ｜ 自动聚合：${mode}`;
+  const el3 = document.getElementById('saveTip');
+  if(el3) el3.innerHTML = '<span class="ok">✓ ' + esc(msg) + '</span>（下一轮聚合生效，不用重启）';
+  toast('设置已保存 ✓');
   loadAll();
 }
 
@@ -1309,7 +1368,88 @@ async function saveBlock(){
   loadAll();
 }
 
-async function refreshRun(){
+async function loadBoard(){
+  const box = document.getElementById('msgList');
+  if(!box) return;
+  try{
+    const r = await (await fetch('/api/msg/list')).json();
+    const items = r.items || [];
+    if(!items.length){
+      box.innerHTML = '<div class="mut">还没有留言，说第一句吧。</div>';
+      return;
+    }
+    box.innerHTML = items.map(m => {
+      const t = new Date((m.ts||0)*1000).toLocaleString('zh-CN', {hour12:false});
+      const pin = m.pinned ? '<span class="warn" style="font-size:11px">📌 置顶</span> ' : '';
+      const reply = m.reply
+        ? `<div style="margin-top:6px;padding:8px 10px;background:var(--bg2,#f6f8fa);border-left:3px solid #1f883d;border-radius:4px">
+             <div class="mut" style="font-size:11px">管理员回复</div>
+             <div style="white-space:pre-wrap">${esc(m.reply)}</div>
+           </div>` : '';
+      const ops = r.admin
+        ? `<div style="margin-top:6px;font-size:11px">
+             <a href="javascript:void(0)" onclick="replyMsg(${m.id})">回复</a> ·
+             <a href="javascript:void(0)" onclick="pinMsg(${m.id},${m.pinned?0:1})">${m.pinned?'取消置顶':'置顶'}</a> ·
+             <a href="javascript:void(0)" onclick="delMsg(${m.id})" style="color:#cf222e">删除</a>
+           </div>` : '';
+      return `<div style="padding:10px 0;border-bottom:1px solid var(--line)">
+        ${pin}<b>${esc(m.nick||'匿名')}</b>
+        <span class="mut" style="font-size:11px">${t}</span>
+        <div style="white-space:pre-wrap;margin-top:4px">${esc(m.text)}</div>
+        ${reply}${ops}
+      </div>`;
+    }).join('');
+  }catch(e){ box.innerHTML = '<div class="bad">读取失败：' + esc(e.message||e) + '</div>'; }
+}
+
+async function postMsg(btn){
+  const nick = (document.getElementById('msgNick').value || '').trim();
+  const text = (document.getElementById('msgText').value || '').trim();
+  if(!text) return toast('写点什么再发', true);
+  const done = (typeof tick === 'function' && btn && btn.tagName) ? tick(btn, '发送中') : null;
+  try{
+    const r = await api('/api/msg/add', {nick, text});
+    if(r.error){ toast(r.error, true); return; }
+    document.getElementById('msgText').value = '';
+    toast('已发布');
+    loadBoard();
+  }catch(e){ toast('发送失败：' + e, true); }
+  finally{ if(done) done(); }
+}
+
+async function replyMsg(id){
+  const txt = prompt('回复内容（留空 = 删除回复）：');
+  if(txt === null) return;
+  const r = await api('/api/msg/reply', {id, reply: txt});
+  toast(r.error ? r.error : '已保存回复', !!r.error);
+  loadBoard();
+}
+
+async function pinMsg(id, pinned){
+  const r = await api('/api/msg/pin', {id, pinned});
+  toast(r.error ? r.error : (pinned ? '已置顶' : '已取消置顶'), !!r.error);
+  loadBoard();
+}
+
+async function delMsg(id){
+  if(!confirm('删掉这条留言？')) return;
+  const r = await api('/api/msg/del', {id});
+  toast(r.error ? r.error : '已删除', !!r.error);
+  loadBoard();
+}
+
+async function refreshLive(btn){
+  const done = btn ? tick(btn, '启动中') : null;
+  try{
+    const r = await api('/api/live/small', {});
+    if(r.ok) toast('直播小聚合已启动（只测线路，几分钟）');
+    else toast(r.error || '启动失败', true);
+    loadAll();
+  }catch(e){ toast('出错：' + e, true); }
+  finally{ if(done) done(); }
+}
+
+async function refreshRun(btn){
   const r = await (await fetch('/refresh')).json();
   toast(r.started ? '已开始重新聚合（约 3~5 分钟）' : ('没启动：' + (r.reason || r.error || '未知')), !r.started);
   setTimeout(loadAll, 3000);
@@ -1336,6 +1476,7 @@ function showTab(name) {
   });
   document.querySelectorAll('.side nav a').forEach(function (a) {
     a.classList.toggle('on', a.getAttribute('data-tab') === name);
+  if(name === 'board' && typeof loadBoard === 'function') setTimeout(loadBoard, 60);
   });
 }
 

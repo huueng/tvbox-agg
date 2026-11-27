@@ -1440,8 +1440,8 @@ SETTING_DEFAULTS = {
     "ltv_cms": 100,          # LibreTV 输出多少个 CMS 接口
     "embed_lives": 1,        # 把央视+卫视写进 tvbox.json 的 lives（客户端直播页直接可用）
     "update_mirror": "",     # 检查更新用的镜像/加速地址，留空只查官方 GHCR
-    "interval_mode": "hours",  # 聚合间隔：hours=每N小时 / daily=每天某点
-    "interval_hours": 6,
+    "interval_mode": "daily",  # 聚合间隔：hours=每N小时 / daily=每天某点
+    "interval_hours": 12,
     "daily_at": "03:30",
     "speed_hours": 12,       # 扩展资源测速多久重测一次
     "max_per_asset": 30,     # 同一个 jar/js/py 最多带几个站点（配置里常见几十个站共用一个 jar）

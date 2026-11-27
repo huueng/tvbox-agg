@@ -37,7 +37,7 @@ import sys
 import state as ST
 
 # 版本号：发版时只改这里（面板、HTTP 头、更新检查都读它）
-VERSION = "0.9.4"
+VERSION = "0.9.5"
 REGISTRY = "ghcr.io"
 IMAGE_REPO = "huueng/tvbox-agg"
 import threading
@@ -104,6 +104,9 @@ def load_cache():
 
 def run_once():
     """跑一次完整聚合；已有任务在跑时直接返回 False"""
+    if LIVE_RUN["on"]:
+        log("直播聚合进行中，这轮点播跳过")
+        return False
     with _LOCK:
         if CACHE["running"]:
             return False
@@ -443,6 +446,71 @@ color:#fff;cursor:pointer}button:hover{background:#1a7f37}
          '登录后可在「设置」里改。</p>'))
 
 # ---------------------------------------------------------------- CMS 代理
+
+# ---------------------------------------------------------------- 留言板
+#
+# 匿名可看可发，但要有底线：
+#   · 文本只存纯文本，前端 esc() 输出（不渲染 HTML）
+#   · 单条 ≤500 字，昵称 ≤20 字，body 上限 8KB
+#   · 同一 IP 30 秒 1 条、24 小时 30 条
+#   · 总数上限 500，超了删最旧的非置顶
+#   · 回复/置顶/删除需要管理员登录（走面板 Cookie）
+
+MSG_MAX_ITEMS = 500
+MSG_TEXT_MAX = 500
+MSG_NICK_MAX = 20
+MSG_RATE = {}          # ip -> [ts, ...]
+MSG_GAP = 30           # 秒
+MSG_DAY_MAX = 30
+
+
+def _msg_path(data_dir):
+    return os.path.join(data_dir, "messages.json")
+
+
+def msg_load(data_dir):
+    try:
+        with open(_msg_path(data_dir), encoding="utf-8") as f:
+            return json.load(f).get("items") or []
+    except Exception:
+        return []
+
+
+def msg_save(data_dir, items):
+    items = sorted(items, key=lambda x: (0 if x.get("pinned") else 1,
+                                         -(x.get("ts") or 0)))
+    ST.save_file(_msg_path(data_dir), {"items": items[:MSG_MAX_ITEMS]})
+
+
+def _msg_clean(t, limit):
+    """去掉控制字符、压缩空行，按字数截断"""
+    t = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", str(t or ""))
+    t = t.replace("\r\n", "\n").strip()
+    return t[:limit]
+
+
+def msg_rate_ok(ip):
+    now = time.time()
+    hist = [t for t in MSG_RATE.get(ip, []) if now - t < 86400]
+    if hist and now - hist[-1] < MSG_GAP:
+        return False, "发太快了，%d 秒后再试" % int(MSG_GAP - (now - hist[-1]))
+    if len(hist) >= MSG_DAY_MAX:
+        return False, "今天发得够多了，明天再来"
+    hist.append(now)
+    MSG_RATE[ip] = hist
+    return True, ""
+
+
+# 直播聚合的互斥：同一时间只允许一个直播任务
+# （小聚合跑着又点大聚合，两个一起测会把带宽打满、结果也互相污染）
+LIVE_LOCK = threading.Lock()
+LIVE_RUN = {"on": False, "mode": "", "since": 0.0, "note": ""}
+
+
+def live_busy():
+    """直播是否在跑；顺便返回描述"""
+    return LIVE_RUN["on"], LIVE_RUN["mode"]
+
 
 def _live_state(data_dir):
     p = os.path.join(data_dir, "live_state.json")
@@ -845,7 +913,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(302, "", "text/html; charset=utf-8",
                               {"Location": self._loc("/login"),
                                "Set-Cookie": "agg_auth=; Path=/; Max-Age=0"})
-        if (path == "/status" or path.startswith("/api/")) and not self._auth_ok(q):
+        # 留言板是公开页面：列表谁都能看（admin 字段会告诉他们能不能管理）
+        _public = path in ("/api/msg/list",)
+        if (path == "/status" or path.startswith("/api/")) and not _public \
+                and not self._auth_ok(q):
             if path.startswith("/api/"):
                 return self._send(401, {"error": "需要登录", "login": "/login"})
             return self._send(302, "", "text/html; charset=utf-8",
@@ -870,13 +941,14 @@ class Handler(BaseHTTPRequestHandler):
                         "/live/other.m3u", "/live/other.m3u8"):
                 access_hit("live:local", 0, self.headers.get("User-Agent", "")[:36],
                            self._client_ip())
-                # 地方台是副接口，每台给 2 条就够（多了客户端翻起来累）
-                return self._send(200, L.to_m3u(doc, "local", 2, drop_bad),
+                # 副接口 = 全量（央视+卫视+港澳台+地方台），地方台每台给 2 条
+                return self._send(200, L.to_m3u(doc, None, per, drop_bad,
+                                               local_lines=2),
                                   "audio/x-mpegurl; charset=utf-8")
             if path == "/live/cctv.json":
                 return self._send(200, L.to_tvbox_lives(doc, "main", per, drop_bad))
             if path in ("/live/local.json", "/live/other.json"):
-                return self._send(200, L.to_tvbox_lives(doc, "local", 2, drop_bad))
+                return self._send(200, L.to_tvbox_lives(doc, None, per, drop_bad))
             if path == "/live/summary":
                 return self._send(200, {
                     "total": doc.get("total"), "ok": doc.get("ok"),
@@ -896,6 +968,14 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 _s = {}
             return self._send(200, check_update(str(_s.get("update_mirror") or "")))
+        if path == "/api/msg/list":
+            items = msg_load(self._data_dir())
+            items = sorted(items, key=lambda x: (0 if x.get("pinned") else 1,
+                                                 -(x.get("ts") or 0)))
+            return self._send(200, {
+                "items": items[:200],
+                "admin": bool(self._auth_ok({})),
+                "total": len(items)})
         if path == "/api/access":
             return self._send(200, access_summary())
         if path == "/api/overview":
@@ -929,7 +1009,11 @@ class Handler(BaseHTTPRequestHandler):
             if not self._auth_ok(q, allow_query=True):
                 return self._send(401, {"error": "token 不对"})
             if CACHE["running"]:
-                return self._send(202, {"started": False, "reason": "已在聚合中"})
+                return self._send(202, {"started": False, "reason": "点播聚合已在跑"})
+            if LIVE_RUN["on"]:
+                return self._send(202, {"started": False,
+                                        "reason": "直播聚合进行中（%s），等它结束" %
+                                                  (LIVE_RUN["mode"] or "未知")})
             run_async()
             return self._send(202, {"started": True})
         if path.startswith("/cms/"):
@@ -983,6 +1067,30 @@ class Handler(BaseHTTPRequestHandler):
                                                  % auth_cookie_value()})
             return self._send(200, auth_login_html("密码不对", self._prefix),
                               "text/html; charset=utf-8")
+
+        # 留言板：匿名可发，所以放在鉴权之前，但自带限流
+        if path == "/api/msg/add":
+            if len(raw) > 8192:
+                return self._send(413, {"ok": False, "error": "内容太长了"})
+            try:
+                mb = json.loads(raw.decode("utf-8") or "{}")
+            except Exception:
+                return self._send(400, {"ok": False, "error": "body 不是合法 JSON"})
+            ip = self._client_ip()
+            ok, why = msg_rate_ok(ip)
+            if not ok:
+                return self._send(429, {"ok": False, "error": why})
+            text = _msg_clean(mb.get("text"), MSG_TEXT_MAX)
+            if not text:
+                return self._send(400, {"ok": False, "error": "写点什么再发"})
+            nick = _msg_clean(mb.get("nick"), MSG_NICK_MAX) or "匿名"
+            d = self._data_dir()
+            items = msg_load(d)
+            items.append({"id": int(time.time() * 1000), "ts": int(time.time()),
+                          "nick": nick, "text": text, "ip": ip[:40],
+                          "reply": "", "reply_ts": 0, "pinned": 0})
+            msg_save(d, items)
+            return self._send(200, {"ok": True})
 
         if not self._auth_ok(q):
             return self._send(401, {"error": "需要登录", "login": "/login"})
@@ -1137,7 +1245,17 @@ class Handler(BaseHTTPRequestHandler):
                 _d = self._data_dir()
                 _mode = path.rsplit("/", 1)[-1]
 
+                if CACHE["running"]:
+                    return self._send(409, {
+                        "ok": False, "error": "点播聚合正在跑，等它结束再试"})
+                if not LIVE_LOCK.acquire(blocking=False):
+                    return self._send(202, {
+                        "ok": False, "running": True, "mode": LIVE_RUN["mode"],
+                        "error": "直播聚合已经在跑了（%s），等它结束" % (
+                            LIVE_RUN["mode"] or "未知")})
+
                 def _run():
+                    LIVE_RUN.update(on=True, mode=_mode, since=time.time())
                     try:
                         _live_tick(_d,
                                    force_big=_mode in ("big", "both"),
@@ -1146,6 +1264,9 @@ class Handler(BaseHTTPRequestHandler):
                                    log=log)
                     except Exception as e:            # noqa: BLE001
                         log("直播调度失败：%s" % e)
+                    finally:
+                        LIVE_RUN.update(on=False, mode="", since=0.0)
+                        LIVE_LOCK.release()
                 threading.Thread(target=_run, daemon=True).start()
                 return self._send(200, {"ok": True, "started": _mode})
             if path == "/api/live/parse":
@@ -1230,6 +1351,37 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self._settings(body))
             if path == "/api/config/add":
                 return self._send(200, self._config_add(body))
+            if path == "/api/msg/reply":
+                d = self._data_dir()
+                items = msg_load(d)
+                mid = int(body.get("id") or 0)
+                reply = _msg_clean(body.get("reply"), MSG_TEXT_MAX)
+                hit = False
+                for it in items:
+                    if int(it.get("id") or 0) == mid:
+                        it["reply"], it["reply_ts"] = reply, int(time.time())
+                        hit = True
+                        break
+                if not hit:
+                    return self._send(404, {"ok": False, "error": "这条留言不在了"})
+                msg_save(d, items)
+                return self._send(200, {"ok": True})
+            if path == "/api/msg/pin":
+                d = self._data_dir()
+                items = msg_load(d)
+                mid = int(body.get("id") or 0)
+                for it in items:
+                    if int(it.get("id") or 0) == mid:
+                        it["pinned"] = 1 if body.get("pinned") else 0
+                        break
+                msg_save(d, items)
+                return self._send(200, {"ok": True})
+            if path == "/api/msg/del":
+                d = self._data_dir()
+                mid = int(body.get("id") or 0)
+                items = [x for x in msg_load(d) if int(x.get("id") or 0) != mid]
+                msg_save(d, items)
+                return self._send(200, {"ok": True})
             if path == "/api/config/import":
                 return self._send(200, self._config_import(body))
             if path == "/api/config/sync":
@@ -1280,6 +1432,7 @@ class Handler(BaseHTTPRequestHandler):
                          "ltv": stat(CACHE.get("ltv") or {}),
                          "all": stat(allp)},
             "sources": self._with_usage(rep.get("sources") or []),
+            "live": self._live_overview(),
             "bench": rep.get("bench", []),
             "dropped": rep.get("dropped", []),
             "settings": A.load_settings(os.path.join(self._data_dir(),
@@ -1475,6 +1628,28 @@ class Handler(BaseHTTPRequestHandler):
                      size=sp.get("bytes") or 0, tested=bool(sp))
         rows.sort(key=lambda x: -x["sites"])
         return rows[:200]
+
+    def _live_overview(self):
+        """直播侧状态：正在跑什么、上次大/小聚合是什么时候"""
+        try:
+            st = _live_state(self._data_dir())
+        except Exception:
+            st = {}
+
+        def fmt(ts):
+            try:
+                return time.strftime("%Y-%m-%d %H:%M", time.localtime(float(ts)))
+            except Exception:
+                return None
+
+        mode_name = {"big": "大聚合", "small": "小聚合", "both": "大+小",
+                     "screen": "全量复检"}
+        return {"running": LIVE_RUN["on"],
+                "mode": mode_name.get(LIVE_RUN["mode"], LIVE_RUN["mode"] or ""),
+                "since": int(time.time() - LIVE_RUN["since"]) if LIVE_RUN["since"] else 0,
+                "last_big": fmt(st.get("last_big")),
+                "last_small": fmt(st.get("last_small")),
+                "last_bench": fmt(st.get("last_bench"))}
 
     def _lives_summary(self):
         try:

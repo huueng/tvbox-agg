@@ -1153,10 +1153,13 @@ def _ordered(chans, kind="cctv"):
     return sorted(chans, key=key)
 
 
-def to_m3u(doc, group_filter=None, lines_per=4, drop_bad=True):
+def to_m3u(doc, group_filter=None, lines_per=4, drop_bad=True,
+           local_lines=None):
     """输出 m3u：每台取质量最好的若干条线路
 
-    group_filter: "main" = 央视+卫视（主接口）｜"local" = 地方台（副接口）
+    group_filter: "main" = 央视+卫视（主接口）｜"local" = 仅地方台
+                  None/"all" = 全量（央视+卫视+港澳台+地方台，副接口用这个）
+    local_lines: 地方台单独给几条（不给就和 lines_per 一样）
     """
     lines = ["#EXTM3U"]
     groups = []
@@ -1174,8 +1177,9 @@ def to_m3u(doc, group_filter=None, lines_per=4, drop_bad=True):
     if group_filter in (None, "local", "other"):
         groups.append(("地方台", doc.get("local") or {}, "local"))
     for gname, chans, kind in groups:
+        lp = local_lines if (kind == "local" and local_lines) else lines_per
         for ch in _ordered(chans, kind):
-            for v in pick_lines(chans[ch], lines_per, drop_bad):
+            for v in pick_lines(chans[ch], lp, drop_bad):
                 h = v["height"] or 0
                 tag = ("4K" if h >= 2160 else "1080P" if h >= 1080 else
                        "720P" if h >= 720 else "高清" if h >= 480 else "")
