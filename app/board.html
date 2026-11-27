@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>留言板 · TVBox 聚合器</title>
+<style>
+  :root{--bg:#fff;--fg:#1f2328;--mut:#656d76;--line:#d0d7de;--pri:#1f883d;--warn:#9a6700;--bad:#cf222e}
+  *{box-sizing:border-box}
+  body{margin:0;background:#f6f8fa;color:var(--fg);
+       font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:24px 16px 60px}
+  header{display:flex;align-items:baseline;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+  h1{font-size:18px;margin:0}
+  .mut{color:var(--mut)}
+  .small{font-size:12px}
+  .card{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:16px}
+  input,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;
+       font:inherit;background:#fff;color:var(--fg)}
+  input:focus,textarea:focus{outline:2px solid #0969da33;border-color:#0969da}
+  button{padding:7px 14px;border:1px solid var(--line);border-radius:6px;background:#f6f8fa;
+       font:inherit;cursor:pointer}
+  button.pri{background:var(--pri);border-color:var(--pri);color:#fff}
+  button:disabled{opacity:.55;cursor:default}
+  .row{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap}
+  .row > .grow{flex:1;min-width:200px}
+  .msg{padding:14px 0;border-bottom:1px solid var(--line)}
+  .msg:last-child{border-bottom:0}
+  .nick{font-weight:600}
+  .time{font-size:12px;color:var(--mut);margin-left:6px}
+  .pin{color:var(--warn);font-size:12px;margin-right:4px}
+  .text{white-space:pre-wrap;word-break:break-word;margin-top:4px}
+  .reply{margin-top:8px;padding:8px 10px;background:#f0f7f2;border-left:3px solid var(--pri);border-radius:4px}
+  .ops{margin-top:8px;font-size:12px}
+  .ops a{margin-right:10px;cursor:pointer;color:#0969da;text-decoration:none}
+  .ops a.del{color:var(--bad)}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#24292f;color:#fff;
+         padding:8px 16px;border-radius:6px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none}
+  .toast.on{opacity:1}
+  .toast.bad{background:var(--bad)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>留言板</h1>
+    <span class="mut small">匿名可发，不需要登录 · 管理员可回复/置顶</span>
+    <a href="/status" class="mut small" style="margin-left:auto">去面板 →</a>
+  </header>
+
+  <div class="card">
+    <div class="row">
+      <div style="width:150px"><input id="nick" maxlength="20" placeholder="昵称（可留空）"></div>
+      <div class="grow"><input id="text" maxlength="500" placeholder="想说点什么…（最多 500 字）"></div>
+      <button class="pri" id="post">发布</button>
+    </div>
+    <div class="mut small" style="margin-top:8px">
+      30 秒只能发一条、一天 30 条。内容只当纯文本显示，不会执行任何代码。
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <div id="list"><span class="mut small">加载中…</span></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let ADMIN = false;
+
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+let toastTimer = null;
+function toast(msg, bad){
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast on' + (bad ? ' bad' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = 'toast'; }, 2600);
+}
+
+async function api(path, body){
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body || {})
+  });
+  let j = {};
+  try { j = await r.json(); } catch (e) {}
+  if (!r.ok && !j.error) j.error = 'HTTP ' + r.status;
+  return j;
+}
+
+async function load(){
+  const box = document.getElementById('list');
+  try {
+    const r = await (await fetch('/api/msg/list', {cache: 'no-store'})).json();
+    ADMIN = !!r.admin;
+    const items = r.items || [];
+    if (!items.length){
+      box.innerHTML = '<span class="mut small">还没有留言，说第一句吧。</span>';
+      return;
+    }
+    box.innerHTML = items.map(m => {
+      const t = new Date((m.ts || 0) * 1000).toLocaleString('zh-CN', {hour12: false});
+      const pin = m.pinned ? '<span class="pin">📌 置顶</span>' : '';
+      const reply = m.reply
+        ? `<div class="reply"><div class="mut small">管理员回复</div>` +
+          `<div style="white-space:pre-wrap">${esc(m.reply)}</div></div>`
+        : '';
+      const ops = ADMIN
+        ? `<div class="ops">` +
+          `<a onclick="reply(${m.id})">回复</a>` +
+          `<a onclick="pin(${m.id},${m.pinned ? 0 : 1})">${m.pinned ? '取消置顶' : '置顶'}</a>` +
+          `<a class="del" onclick="del(${m.id})">删除</a></div>`
+        : '';
+      return `<div class="msg">${pin}<span class="nick">${esc(m.nick || '匿名')}</span>` +
+             `<span class="time">${esc(t)}</span>` +
+             `<div class="text">${esc(m.text)}</div>${reply}${ops}</div>`;
+    }).join('');
+  } catch (e) {
+    box.innerHTML = '<span class="mut small">读取失败，刷新试试</span>';
+  }
+}
+
+async function post(){
+  const nick = document.getElementById('nick').value.trim();
+  const text = document.getElementById('text').value.trim();
+  if (!text) return toast('写点什么再发', true);
+  const btn = document.getElementById('post');
+  btn.disabled = true;
+  try {
+    const r = await api('/api/msg/add', {nick, text});
+    if (r.error) return toast(r.error, true);
+    document.getElementById('text').value = '';
+    toast('已发布');
+    load();
+  } finally { btn.disabled = false; }
+}
+
+async function reply(id){
+  const txt = prompt('回复内容（留空 = 删除回复）：');
+  if (txt === null) return;
+  const r = await api('/api/msg/reply', {id, reply: txt});
+  toast(r.error || '已保存', !!r.error);
+  load();
+}
+
+async function pin(id, pinned){
+  const r = await api('/api/msg/pin', {id, pinned});
+  toast(r.error || (pinned ? '已置顶' : '已取消置顶'), !!r.error);
+  load();
+}
+
+async function del(id){
+  if (!confirm('删掉这条留言？')) return;
+  const r = await api('/api/msg/del', {id});
+  toast(r.error || '已删除', !!r.error);
+  load();
+}
+
+document.getElementById('post').addEventListener('click', post);
+document.getElementById('text').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) post();
+});
+load();
+</script>
+</body>
+</html>

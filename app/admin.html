@@ -147,7 +147,7 @@ td.ops .mini{margin-right:2px}
       <a href="#live" data-tab="live">直播</a>
       <a href="#configs" data-tab="configs">配置接口</a>
       <a href="#settings" data-tab="settings">设置</a>
-      <a href="#board" data-tab="board">留言板</a>
+      <a href="/board" target="_blank">留言板 ↗</a>
       <a href="#ops" data-tab="ops">运维</a>
     </nav>
     <div class="side-foot"><button class="mini" onclick="logout()">退出登录</button></div>
@@ -464,20 +464,6 @@ td.ops .mini{margin-right:2px}
     （形如 <code>ghcr.nju.edu.cn/huueng/tvbox-agg</code>），检查更新会改从这里查。
     <b>这只影响"检查"，真正拉镜像还是按你 compose 里写的地址走。</b>
   </div>
-</div>
-</section>
-    <section data-panel="board"><div class="card">
-  <h2>留言板 <span class="mut">（匿名可发，管理员可回复/置顶）</span></h2>
-  <div class="row" style="margin-bottom:8px">
-    <div style="flex:1;min-width:160px"><input id="msgNick" maxlength="20" placeholder="昵称（可留空，默认「匿名」）"></div>
-    <div style="flex:3;min-width:260px"><input id="msgText" maxlength="500" placeholder="想说点什么…（最多 500 字）"
-      onkeydown="if(event.key==='Enter'){postMsg(this)}"></div>
-    <button class="pri" onclick="postMsg(this)">发布</button>
-  </div>
-  <div class="mut" style="font-size:11px;margin-bottom:12px">
-    同一个人 30 秒只能发一条、一天 30 条。留言只当纯文本处理，不会执行任何代码。
-  </div>
-  <div id="msgList"></div>
 </div>
 </section>
     <section data-panel="ops"><div class="card">
@@ -1364,76 +1350,6 @@ async function saveBlock(){
   loadAll();
 }
 
-async function loadBoard(){
-  const box = document.getElementById('msgList');
-  if(!box) return;
-  try{
-    const r = await (await fetch('/api/msg/list')).json();
-    const items = r.items || [];
-    if(!items.length){
-      box.innerHTML = '<div class="mut">还没有留言，说第一句吧。</div>';
-      return;
-    }
-    box.innerHTML = items.map(m => {
-      const t = new Date((m.ts||0)*1000).toLocaleString('zh-CN', {hour12:false});
-      const pin = m.pinned ? '<span class="warn" style="font-size:11px">📌 置顶</span> ' : '';
-      const reply = m.reply
-        ? `<div style="margin-top:6px;padding:8px 10px;background:var(--bg2,#f6f8fa);border-left:3px solid #1f883d;border-radius:4px">
-             <div class="mut" style="font-size:11px">管理员回复</div>
-             <div style="white-space:pre-wrap">${esc(m.reply)}</div>
-           </div>` : '';
-      const ops = r.admin
-        ? `<div style="margin-top:6px;font-size:11px">
-             <a href="javascript:void(0)" onclick="replyMsg(${m.id})">回复</a> ·
-             <a href="javascript:void(0)" onclick="pinMsg(${m.id},${m.pinned?0:1})">${m.pinned?'取消置顶':'置顶'}</a> ·
-             <a href="javascript:void(0)" onclick="delMsg(${m.id})" style="color:#cf222e">删除</a>
-           </div>` : '';
-      return `<div style="padding:10px 0;border-bottom:1px solid var(--line)">
-        ${pin}<b>${esc(m.nick||'匿名')}</b>
-        <span class="mut" style="font-size:11px">${t}</span>
-        <div style="white-space:pre-wrap;margin-top:4px">${esc(m.text)}</div>
-        ${reply}${ops}
-      </div>`;
-    }).join('');
-  }catch(e){ box.innerHTML = '<div class="bad">读取失败：' + esc(e.message||e) + '</div>'; }
-}
-
-async function postMsg(btn){
-  const nick = (document.getElementById('msgNick').value || '').trim();
-  const text = (document.getElementById('msgText').value || '').trim();
-  if(!text) return toast('写点什么再发', true);
-  const done = (typeof tick === 'function' && btn && btn.tagName) ? tick(btn, '发送中') : null;
-  try{
-    const r = await api('/api/msg/add', {nick, text});
-    if(r.error){ toast(r.error, true); return; }
-    document.getElementById('msgText').value = '';
-    toast('已发布');
-    loadBoard();
-  }catch(e){ toast('发送失败：' + e, true); }
-  finally{ if(done) done(); }
-}
-
-async function replyMsg(id){
-  const txt = prompt('回复内容（留空 = 删除回复）：');
-  if(txt === null) return;
-  const r = await api('/api/msg/reply', {id, reply: txt});
-  toast(r.error ? r.error : '已保存回复', !!r.error);
-  loadBoard();
-}
-
-async function pinMsg(id, pinned){
-  const r = await api('/api/msg/pin', {id, pinned});
-  toast(r.error ? r.error : (pinned ? '已置顶' : '已取消置顶'), !!r.error);
-  loadBoard();
-}
-
-async function delMsg(id){
-  if(!confirm('删掉这条留言？')) return;
-  const r = await api('/api/msg/del', {id});
-  toast(r.error ? r.error : '已删除', !!r.error);
-  loadBoard();
-}
-
 async function refreshLive(btn){
   const done = btn ? tick(btn, '启动中') : null;
   try{
@@ -1472,7 +1388,6 @@ function showTab(name) {
   });
   document.querySelectorAll('.side nav a').forEach(function (a) {
     a.classList.toggle('on', a.getAttribute('data-tab') === name);
-  if(name === 'board' && typeof loadBoard === 'function') setTimeout(loadBoard, 60);
   });
 }
 

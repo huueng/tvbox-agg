@@ -39,7 +39,7 @@ import sys
 import state as ST
 
 # 版本号：发版时只改这里（面板、HTTP 头、更新检查都读它）
-VERSION = "0.9.7"
+VERSION = "0.9.8"
 REGISTRY = "ghcr.io"
 IMAGE_REPO = "huueng/tvbox-agg"
 import threading
@@ -865,6 +865,15 @@ class Handler(BaseHTTPRequestHandler):
             # 从根路径跳过去会解析回 "/"，又回到配置 JSON。
             return self._send(302, "", "text/html; charset=utf-8",
                               {"Location": (self._prefix or "") + "/status"})
+        # 留言板是公开页面：不用登录就能看和发（放这里是为了绕过下面的鉴权）
+        if path == "/board":
+            try:
+                with open(os.path.join(HERE, "board.html"), encoding="utf-8") as bf:
+                    _html = bf.read()
+            except Exception as e:
+                return self._send(500, {"error": "留言板页面读取失败：%s" % e})
+            return self._send(200, _html, "text/html; charset=utf-8")
+
         # === 输出地址（没有别名，没有重定向，写错就是 404）===
         #   /tvbox        默认档（CMS + jar + py）
         #   /tvbox-all    全能档（CMS + jar + js + py）
