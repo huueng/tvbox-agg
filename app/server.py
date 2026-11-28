@@ -1121,7 +1121,8 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/alist/test", "/alist/test/"):
             return self._send(200, AL.test_page(
                 urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query,
-                                      keep_blank_values=True)), "text/html; charset=utf-8")
+                                      keep_blank_values=True),
+                self._data_dir()), "text/html; charset=utf-8")
         # 网盘播放转发：客户端只访问我们，视频流由容器转给 OpenList
         if path in ("/alist/p", "/alist/p/"):
             return self._alist_relay(urllib.parse.parse_qs(
@@ -1866,7 +1867,8 @@ class Handler(BaseHTTPRequestHandler):
                 if v:
                     self.send_header(k, v)
             self.send_header("Accept-Ranges", "bytes")
-            self.send_header("Cache-Control", "no-store")
+            # 允许缓存分片：播放器 seek 时不至于每次都重新找网盘要一遍
+            self.send_header("Cache-Control", "private, max-age=3600")
             self.end_headers()
             while True:
                 chunk = up.read(64 * 1024)

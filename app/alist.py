@@ -448,7 +448,7 @@ def site_entry(data_dir, base):
             "ext": (cfg["url"] or ""), "_classes": len(cls)}
 
 
-def test_page(params):
+def test_page(params, data_dir=None):
     """网页播放测试页
 
     直接把播放地址塞进 <video>：浏览器能播，说明流没问题，锅在客户端；
@@ -457,7 +457,7 @@ def test_page(params):
     p0 = (params.get("p") or [""])[0]
     url = ("/alist/p?p=" + urllib.parse.quote(p0)) if p0 else ""
     try:
-        n = pid(p0) if p0 else ""
+        n = pid(p0, data_dir) if p0 else ""
     except Exception:
         n = ""
     name = os.path.basename(n) if n else "（没给 p 参数）"
