@@ -167,14 +167,66 @@ def raw_url(cfg, path):
 
 # ------------------------------------------------------------------ 路径 <-> id
 
-def tid(path):
-    return base64.urlsafe_b64encode(str(path).encode()).decode().rstrip("=")
+# 有些客户端（影视仓等）会把 type_id / vod_id 当数字处理，
+# 所以对外一律用纯数字 id，内部再映射回路径。映射存盘，重启后不变。
+_IDS = {"next": 1, "map": {}}       # map: "1" -> "/ssd128/mp4/电视剧"
+_IDS_LOCK = threading.Lock()
 
 
-def pid(s):
-    s = str(s or "")
+def _ids_path(data_dir):
+    return os.path.join(data_dir, "alist_ids.json")
+
+
+def _ids_load(data_dir):
+    global _IDS
+    if _IDS.get("map") or _IDS.get("next", 1) > 1:
+        return _IDS
     try:
-        return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4)).decode()
+        with open(_ids_path(data_dir), encoding="utf-8") as f:
+            doc = json.load(f)
+        _IDS = {"next": int(doc.get("next") or 1),
+                "map": {str(k): str(v) for k, v in (doc.get("map") or {}).items()}}
+    except Exception:
+        _IDS = {"next": 1, "map": {}}
+    return _IDS
+
+
+def _ids_save(data_dir):
+    try:
+        import state as ST
+        ST.save_file(_ids_path(data_dir), _IDS)
+    except Exception:
+        pass
+
+
+def tid(path, data_dir=None):
+    """路径 -> 数字 id（同一个路径永远同一个 id）"""
+    path = str(path)
+    if not data_dir:
+        # 没有数据目录时退回 base64（只用于测试）
+        return base64.urlsafe_b64encode(path.encode()).decode().rstrip("=")
+    with _IDS_LOCK:
+        ids = _ids_load(data_dir)
+        for k, v in ids["map"].items():
+            if v == path:
+                return int(k)
+        nid = int(ids["next"])
+        ids["map"][str(nid)] = path
+        ids["next"] = nid + 1
+        _ids_save(data_dir)
+        return nid
+
+
+def pid(s, data_dir=None):
+    """数字 id -> 路径；也兼容老的 base64 id"""
+    t = str(s or "").strip()
+    if not t:
+        return ""
+    if data_dir and t.isdigit():
+        ids = _ids_load(data_dir)
+        return ids["map"].get(t, "")
+    try:
+        return base64.urlsafe_b64decode(t + "=" * (-len(t) % 4)).decode()
     except Exception:
         return ""
 
@@ -211,7 +263,7 @@ def _human(n):
 
 # ------------------------------------------------------------------ 分类
 
-def _classes(cfg):
+def _classes(cfg, data_dir=None):
     """一级分类 = 每个 root 下的子目录；root 本身是内容目录时也算一个分类
 
     返回 [{"type_id": tid, "type_name": 名字, "type_pid": 0}, ...]
@@ -231,19 +283,21 @@ def _classes(cfg):
                 if p in seen:
                     continue
                 seen.add(p)
-                out.append({"type_id": tid(p), "type_name": x["name"], "type_pid": 0})
+                out.append({"type_id": tid(p, data_dir), "type_name": x["name"],
+                            "type_pid": 0})
         elif files:
             # root 直接就是一堆片子（比如 /电影），整体做一个分类
             nm = os.path.basename(root.rstrip("/")) or "网盘"
             if root not in seen:
                 seen.add(root)
-                out.append({"type_id": tid(root), "type_name": nm, "type_pid": 0})
+                out.append({"type_id": tid(root, data_dir), "type_name": nm,
+                            "type_pid": 0})
     return out
 
 
 # ------------------------------------------------------------------ 条目与详情
 
-def _entries(cfg, path):
+def _entries(cfg, path, data_dir=None):
     """目录下的条目：子目录 + 视频/音频文件，各自成条"""
     ok, items = ls(cfg, path)
     if not ok:
@@ -253,9 +307,11 @@ def _entries(cfg, path):
         nm = str(x.get("name") or "")
         p = path.rstrip("/") + "/" + nm
         if x.get("is_dir"):
-            out.append({"id": tid(p), "name": nm, "kind": "dir", "size": 0})
+            out.append({"id": tid(p, data_dir), "name": nm, "kind": "dir",
+                        "size": 0})
         elif _ispath_video(nm) or _ispath_audio(nm):
-            out.append({"id": tid(p), "name": os.path.splitext(nm)[0],
+            out.append({"id": tid(p, data_dir),
+                        "name": os.path.splitext(nm)[0],
                         "kind": "file", "size": x.get("size") or 0})
     return out, ""
 
@@ -332,7 +388,7 @@ def cms(data_dir, params, base=""):
     pg = int((params.get("pg") or ["1"])[0] or 1)
 
     if ac == "detail" or ids:
-        path = pid(ids)
+        path = pid(ids, data_dir)
         if not path:
             return {"list": []}
         # 判断"这个 id 是文件还是目录"要看扩展名，不能看"目录里有没有子目录"——
@@ -352,8 +408,8 @@ def cms(data_dir, params, base=""):
                           "vod_remarks": "%d 个文件" % len(files)}]}
 
     if t:
-        path = pid(t)
-        entries, err = _entries(cfg, path)
+        path = pid(t, data_dir)
+        entries, err = _entries(cfg, path, data_dir)
         if err:
             return {"list": [], "page": 1, "pagecount": 0, "total": 0, "msg": err}
         per = 40
@@ -367,7 +423,7 @@ def cms(data_dir, params, base=""):
                 "pagecount": max(1, (len(entries) + per - 1) // per),
                 "total": len(entries), "limit": str(per)}
 
-    return {"class": _classes(cfg)}
+    return {"class": _classes(cfg, data_dir)}
 
 
 # ------------------------------------------------------------------ 给输出配置注入站点
@@ -381,7 +437,7 @@ def site_entry(data_dir, base):
         return None
     cfg = load_cfg(data_dir)
     try:
-        cls = _classes(cfg)
+        cls = _classes(cfg, data_dir)
     except Exception:
         cls = []
     return {"key": "alist_netdisk", "name": "网盘",

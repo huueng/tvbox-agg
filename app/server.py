@@ -1123,8 +1123,18 @@ class Handler(BaseHTTPRequestHandler):
             _pr = urllib.parse.parse_qs(
                 urllib.parse.urlsplit(self.path).query, keep_blank_values=True)
             try:
-                return self._send(200, AL.cms(self._data_dir(), _pr,
-                                              base=self._base()))
+                _doc = AL.cms(self._data_dir(), _pr, base=self._base())
+                try:
+                    CMS_LOG.append({
+                        "t": time.strftime("%H:%M:%S"), "key": "alist",
+                        "q": urllib.parse.urlsplit(self.path).query[:80],
+                        "cache": False,
+                        "size": len(_doc.get("list") or _doc.get("class") or []),
+                        "ua": (self.headers.get("User-Agent") or "")[:28],
+                        "err": _doc.get("msg") or ""})
+                except Exception:
+                    pass
+                return self._send(200, _doc)
             except Exception as e:                        # noqa: BLE001
                 return self._send(500, {"class": [], "list": [],
                                         "msg": "网盘接口出错：%s" % e})
@@ -1296,7 +1306,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not cand["url"]:
                         return self._send(400, {"ok": False, "error": "先填地址"})
                     try:
-                        cls = AL._classes(cand)
+                        cls = AL._classes(cand, self._data_dir())
                     except Exception as e:                # noqa: BLE001
                         return self._send(200, {"ok": False,
                                                 "error": "连不上：%s" % e})
