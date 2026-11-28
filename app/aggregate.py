@@ -765,6 +765,80 @@ def insert_douban(doc, name="豆瓣"):
     return 1
 
 
+def site_kind(x):
+    """站点类型：cms / jar / py / js / pan"""
+    if x.get("key") == "alist_netdisk":
+        return "pan"
+    t = str(x.get("type"))
+    if t in ("0", "1"):
+        return "cms"
+    if t == "3":
+        if x.get("jar"):
+            return "jar"
+        ext = str(x.get("ext") or "").lower()
+        if ext.endswith(".py"):
+            return "py"
+        if ext.endswith(".js"):
+            return "js"
+        return "jar"
+    return "jar"
+
+
+def build_custom(base_doc, stg, data_dir, proxy_base=""):
+    """自定义档：按 cms → jar → py → js → 网盘 的顺序，各取设定数量
+
+    base_doc 用全能档，里面各种类型的站点都有；取完再单独处理首站。
+    """
+    pool = list(base_doc.get("sites") or [])
+    # 首站单独处理，先摘出去
+    douban = [x for x in pool if x.get("key") == "douban"]
+    pan = [x for x in pool if x.get("key") == "alist_netdisk"]
+    pool = [x for x in pool if x.get("key") not in ("douban", "alist_netdisk")]
+
+    picks = []
+    for kind, limit in (("cms", int(stg.get("custom_cms") or 0)),
+                        ("jar", int(stg.get("custom_jar") or 0)),
+                        ("py", int(stg.get("custom_py") or 0)),
+                        ("js", int(stg.get("custom_js") or 0)),
+                        ("pan", int(stg.get("custom_pan") or 0))):
+        if limit <= 0:
+            continue
+        cand = [x for x in pool if site_kind(x) == kind][:limit]
+        picks.extend(dict(x) for x in cand)
+
+    # 网盘：池子里没有就走 alist 配置自己造一个
+    home = str(stg.get("custom_home") or "none")
+    pan_n = int(stg.get("custom_pan") or 0)
+    if home == "alist" or pan_n > 0:
+        if not pan:
+            try:
+                import alist as _AL
+                one = _AL.site_entry(data_dir, proxy_base or "")
+                if one:
+                    pan = [{k: v for k, v in one.items()
+                            if not str(k).startswith("_")}]
+            except Exception:
+                pan = []
+        if pan and not any(site_kind(x) == "pan" for x in picks):
+            picks.extend(dict(x) for x in pan[:max(pan_n, 1)])
+
+    out = dict(base_doc)
+    out["name"] = str(stg.get("custom_name") or "自用")
+
+    if home == "douban" and douban:
+        out["sites"] = [dict(douban[0])] + picks
+    elif home == "alist" and pan:
+        out["sites"] = [dict(pan[0])] + [x for x in picks
+                                         if site_kind(x) != "pan"]
+    else:
+        out["sites"] = picks
+
+    # 豆瓣要靠配置级 spider 才能加载
+    if home == "douban" and base_doc.get("spider"):
+        out["spider"] = base_doc["spider"]
+    return out
+
+
 def stamp_first_site(doc, stamp):
     """首个站点名前面加聚合时间：客户端左上角就能看到「这份配置是几点生成的」
 
@@ -1423,6 +1497,16 @@ SETTING_DEFAULTS = {
     "probe_budget": 40,      # 每轮最多体检多少个（按最久没探的轮转）
     "max_categories": 12,    # 每个站点最多铺几个分类 Tab（站点自带几十个，多了没用）
     "sort_mode": "kind",      # 输出顺序：kind=按资源类型(默认) / latency=按响应时间 / name=按名称
+    # 自定义档：自己挑类型和数量，输出到独立地址
+    "custom_on": 0,
+    "custom_path": "custom",
+    "custom_name": "自用",
+    "custom_home": "none",     # douban / alist / none
+    "custom_cms": 8,
+    "custom_jar": 15,
+    "custom_py": 5,
+    "custom_js": 10,
+    "custom_pan": 1,
     # 首站：douban=内置豆瓣 / alist=网盘 / none=都不用（三者互斥）
     "home_site": "douban",
     "douban_first": 1,        # 旧键，仅为读老配置保留
@@ -2514,9 +2598,30 @@ def run_pipeline(seeds_path=None, out_dir=None, workers=3, timeout=20,
                          "classes": []}
                         for s0 in tvbox.get("sites") or []]
 
-    # 全部处理完再落盘：三份配置 + LibreTV
-    for fn, doc in (("tvbox.json", tvbox), ("tvbox-direct.json", direct),
-                    ("all.json", allp), ("ltv.json", ltv)):
+    # 自定义档：用户自己挑类型和数量，输出到独立地址
+    custom = None
+    if int(stg.get("custom_on") or 0):
+        try:
+            custom = build_custom(allp, stg, data_dir, proxy_base or "")
+            stamp = (time.strftime("%Y-%m-%d  %H:%M")
+                     if int(stg.get("stamp_name", 1)) else "")
+            stamp_first_site(custom, stamp)
+            _kinds = {}
+            for x in custom.get("sites") or []:
+                _kinds[site_kind(x)] = _kinds.get(site_kind(x), 0) + 1
+            log("  自定义档：%d 站（%s）" % (
+                len(custom.get("sites") or []),
+                "，".join("%s %d" % kv for kv in _kinds.items())))
+        except Exception as e:                          # noqa: BLE001
+            log("  自定义档生成失败：%s" % e)
+            custom = None
+
+    # 全部处理完再落盘：配置 + LibreTV
+    _dump = [("tvbox.json", tvbox), ("tvbox-direct.json", direct),
+             ("all.json", allp), ("ltv.json", ltv)]
+    if custom is not None:
+        _dump.append(("custom.json", custom))
+    for fn, doc in _dump:
         with open(os.path.join(out_dir, fn), "w", encoding="utf-8") as f:
             json.dump(doc, f, ensure_ascii=False, indent=1)
 
@@ -2565,7 +2670,8 @@ def run_pipeline(seeds_path=None, out_dir=None, workers=3, timeout=20,
     # 收尾：把长期失效的种子从 sources.json 里清掉，避免越攒越多
     prune_sources(seeds_path, state, prune_after=max(drop_after * 3, 10), log=log)
     return {"tvbox": tvbox, "libretv": ltv, "report": rep,
-            "sources": included, "full": tvbox, "all": allp, "direct": direct}
+            "sources": included, "full": tvbox, "all": allp, "direct": direct,
+            "custom": custom}
 
 
 def main():

@@ -419,6 +419,30 @@ td.ops .mini{margin-right:2px}
     <span id="alistTip" class="mut" style="font-size:11px"></span>
   </div>
 
+  <h3 class="setgrp">自定义配置</h3>
+  <div class="mut" style="font-size:11px;margin-bottom:8px">
+    自己挑要哪些类型的站点、各要几个，输出到独立地址。适合「只想给电视留少量大站」或对外分享精简版。
+    顺序固定：CMS → jar → py → js → 网盘。
+  </div>
+  <div class="setv">
+    <div class="si"><span>启用自定义档(1开/0关)</span><input id="s_custom_on" type="number" min="0" max="1"></div>
+    <div class="si"><span>输出路径</span><input id="s_custom_path" type="text" style="width:140px" placeholder="custom"></div>
+    <div class="si"><span>主站名</span><input id="s_custom_name" type="text" style="width:140px" placeholder="自用"></div>
+    <div class="si"><span>首站</span><select id="s_custom_home" style="width:170px">
+      <option value="none">都不放，直接按类型排</option>
+      <option value="douban">豆瓣</option>
+      <option value="alist">网盘</option>
+    </select></div>
+    <div class="si"><span>CMS 站数量</span><input id="s_custom_cms" type="number" min="0" max="50"></div>
+    <div class="si"><span>jar 站数量</span><input id="s_custom_jar" type="number" min="0" max="60"></div>
+    <div class="si"><span>py 站数量</span><input id="s_custom_py" type="number" min="0" max="30"></div>
+    <div class="si"><span>js 站数量</span><input id="s_custom_js" type="number" min="0" max="60"></div>
+    <div class="si"><span>网盘站点数量</span><input id="s_custom_pan" type="number" min="0" max="5"></div>
+  </div>
+  <div class="mut" style="font-size:11px;margin-top:6px">
+    和现有地址冲突的名字不能用（tvbox / libretv / status 等）。改完跑一轮聚合才生效。
+  </div>
+
   <div class="mut" id="rulesInfo" style="margin-top:12px;font-size:11px"></div>
   <div class="row" style="margin-top:12px">
     <button class="pri" onclick="saveSettings()">保存设置</button>
@@ -627,7 +651,7 @@ function renderInner(o){
   const cDedup = c => c.deduped ?? Math.max(0, cProbed(c) - cMerged(c));
 
   const st = o.settings || {};
-  for(const k of ['active_max','merge_room','probe_budget','max_seeds','max_categories','embed_lives','stamp_name','douban_first','stamp_suffix','ext_default','ext_all','ltv_cms','bench_latency','bench_every','config_days','config_max_fail','auto_floor','max_configs','auto_promote','zero_bench','max_per_asset','live_max_test','live_active_n','live_drop_seg_bad','live_tomb_days','live_tomb_max_fail','bench_days','live_auto_promote','live_big_days','live_small_days','live_bench_days','speed_hours','interval_hours','live_lines_per','interval_mode','daily_at','update_mirror','home_site'])
+  for(const k of ['active_max','merge_room','probe_budget','max_seeds','max_categories','embed_lives','stamp_name','douban_first','stamp_suffix','ext_default','ext_all','ltv_cms','bench_latency','bench_every','config_days','config_max_fail','auto_floor','max_configs','auto_promote','zero_bench','max_per_asset','live_max_test','live_active_n','live_drop_seg_bad','live_tomb_days','live_tomb_max_fail','bench_days','live_auto_promote','live_big_days','live_small_days','live_bench_days','speed_hours','interval_hours','live_lines_per','interval_mode','daily_at','update_mirror','home_site','custom_path','custom_name','custom_home'])
     if(document.getElementById('s_' + k)) document.getElementById('s_' + k).value = st[k] ?? '';
   document.getElementById('daysHint').textContent = st.config_days || 5;
 
@@ -698,6 +722,7 @@ function renderInner(o){
       ? '<tr><th>原因</th><th class="num">数量</th></tr>' + allWarns.join('')
       : '<tr><td class="mut">没有问题，这里是空的</td></tr>';
 
+  const cp = (o.settings && o.settings.custom_path) ? ('/' + o.settings.custom_path) : '/custom';
   const eps = [
     ['/tvbox', '默认档：CMS + jar + py（影视仓填这个）'],
     ['/tvbox-all', '全能档：CMS + jar + js + py'],
@@ -707,6 +732,7 @@ function renderInner(o){
     ['/status', '本管理页'],
     ['/report.md', '体检报告（人看）'],
   ];
+  if(o.settings && String(o.settings.custom_on) === '1') eps.splice(4, 0, [cp, '自定义档：自己挑的站点组合']);
   document.getElementById('endpoints').innerHTML =
     '<tr><th>地址</th><th>用途</th></tr>' +
     eps.map(([u, d]) => `<tr><td><a href="${u}" target="_blank"><code>${u}</code></a></td>` +
@@ -836,7 +862,7 @@ function renderInner(o){
   (o.assets || []).forEach(a => { speed[a.asset] = a; });
   const isGated = x => ((x.gate || {}).verdict === 'blocked');
 
-  const ORDER = {'默认': 0, '全能': 1, 'cms': 2};
+  const ORDER = {'默认': 0, '全能': 1, 'cms': 2, '自定义': 3};
   const usedTags = u => (u && u.length)
     ? u.slice().sort((a, b) => (ORDER[a] ?? 9) - (ORDER[b] ?? 9))
         .map(x => `<span class="tag blue">${x}</span>`).join(' ')
@@ -1422,11 +1448,11 @@ async function saveAlist(btn){
 
 async function saveSettings(){
   const body = {};
-  for(const k of ['interval_mode','daily_at','sort_mode','stamp_suffix','update_mirror','home_site']){
+  for(const k of ['interval_mode','daily_at','sort_mode','stamp_suffix','update_mirror','home_site','custom_path','custom_name','custom_home']){
     const el2 = document.getElementById('s_' + k);
     if(el2) body[k] = (el2.value || '').trim();
   }
-  for(const k of ['active_max','merge_room','probe_budget','max_seeds','max_categories','embed_lives','stamp_name','douban_first','stamp_suffix','ext_default','ext_all','ltv_cms','bench_latency','bench_every','config_days','config_max_fail','auto_floor','max_configs','auto_promote','zero_bench','max_per_asset','live_max_test','live_active_n','live_drop_seg_bad','live_tomb_days','live_tomb_max_fail','bench_days','live_auto_promote','live_big_days','live_small_days','live_bench_days','speed_hours','interval_hours','live_lines_per']){
+  for(const k of ['active_max','merge_room','probe_budget','max_seeds','max_categories','embed_lives','stamp_name','douban_first','stamp_suffix','ext_default','ext_all','ltv_cms','bench_latency','bench_every','config_days','config_max_fail','auto_floor','max_configs','auto_promote','zero_bench','max_per_asset','live_max_test','live_active_n','live_drop_seg_bad','live_tomb_days','live_tomb_max_fail','bench_days','live_auto_promote','live_big_days','live_small_days','live_bench_days','speed_hours','interval_hours','live_lines_per','custom_on','custom_cms','custom_jar','custom_py','custom_js','custom_pan']){
     const v = parseInt(document.getElementById('s_' + k).value, 10);
     if(!isNaN(v)) body[k] = v;
   }

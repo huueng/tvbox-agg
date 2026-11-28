@@ -84,6 +84,7 @@ CFG = {
     "token": "",
     "base_url": "",
     "proxy_base": "",      # 非空 → TVBox 输出走 /cms/<key> 透明代理
+    "custom_path": "",     # 自定义档的对外路径，如 /custom
 }
 
 
@@ -121,7 +122,8 @@ def load_cache():
     """启动时先把上次结果读进内存，客户端立刻可用"""
     for key, fn in (("tvbox", "tvbox.json"), ("report", "report.json"),
                     ("all", "all.json"), ("ltv", "ltv.json"),
-                    ("direct", "tvbox-direct.json")):
+                    ("direct", "tvbox-direct.json"),
+                    ("custom", "custom.json")):
         p = os.path.join(CFG["out"], fn)
         try:
             with open(p, encoding="utf-8") as f:
@@ -160,6 +162,7 @@ def run_once():
                      full=res.get("full") or CACHE.get("full"),
                      all=res.get("all") or CACHE.get("all"),
                      direct=res.get("direct") or CACHE.get("direct"),
+                     custom=res.get("custom") or CACHE.get("custom"),
                      last_run=time.strftime("%Y-%m-%d %H:%M:%S"),
                      last_error=None)
         threading.Thread(target=warm_dialects, args=(res,), daemon=True).start()
@@ -951,6 +954,16 @@ class Handler(BaseHTTPRequestHandler):
             access_hit("cfg:" + key, len(_txt.encode("utf-8")),
                        self.headers.get("User-Agent", "")[:36], self._client_ip())
             return self._send(200, _txt)
+        # 自定义档：路径由设置决定，默认 /custom
+        _cp = CFG.get("custom_path") or ""
+        if _cp and _cp != "/" and path == _cp:
+            if not CACHE.get("custom"):
+                return self._send(404, {"error": "自定义档还没生成",
+                                        "hint": "面板 → 设置 → 自定义配置，确认已开启后跑一轮聚合"})
+            _txt = self._cfg_text("custom")
+            access_hit("cfg:custom", len(_txt.encode("utf-8")),
+                       self.headers.get("User-Agent", "")[:36], self._client_ip())
+            return self._send(200, _txt)
         if path == "/libretv":
             access_hit("cfg:ltv", 0, self.headers.get("User-Agent", "")[:36],
                        self._client_ip())
@@ -1626,6 +1639,16 @@ class Handler(BaseHTTPRequestHandler):
         # cms（纯 CMS 输出）不能直接拿 site.api 比：开了 /cms 代理后，
         # 输出里的 api 已经是 <base>/cms/<key>，和 LibreTV 里的上游地址对不上。
         # 所以从 site_table 反查 key -> 上游 api，再和 ltv.json 的 url 比对。
+        # 自定义档
+        try:
+            _cus = ST.load(CFG["out"], "custom.json", {})
+            for s0 in _cus.get("sites") or []:
+                if s0.get("key"):
+                    m.setdefault(("key", s0["key"]), set()).add("自定义")
+                if s0.get("api"):
+                    m.setdefault(("api", s0["api"]), set()).add("自定义")
+        except Exception:
+            pass
         try:
             doc = ST.load(CFG["out"], "ltv.json", {})
             ltv_urls = {str(x.get("url") or "").strip()
@@ -1853,11 +1876,33 @@ class Handler(BaseHTTPRequestHandler):
         ST.save_file(path, reg)
         return {"ok": True, "tier": tier}
 
+    # 自定义档路径不能和现有地址撞车
+    RESERVED_PATHS = {
+        "tvbox", "tvbox-all", "tvbox-direct", "libretv", "ltv",
+        "cctv.m3u", "other.m3u", "status", "login", "logout", "board",
+        "report.json", "report.md", "alist", "cms", "api", "export.txt",
+        "healthz", "refresh", "devtest", "favicon.ico",
+    }
+
     def _settings(self, body):
         path = os.path.join(self._data_dir(), "settings.json")
         cur = A.load_settings(path)
-        cur.update({k: v for k, v in (body or {}).items() if k in cur})
+        body = dict(body or {})
+
+        # 自定义档路径校验：只允许字母数字和 - _，且不能占用现有地址
+        if "custom_path" in body:
+            p0 = str(body.get("custom_path") or "custom").strip().strip("/")
+            if not re.match(r"^[A-Za-z0-9_-]{1,24}$", p0 or ""):
+                return {"ok": False,
+                        "error": "自定义路径只能用字母、数字、- _，最长 24 位"}
+            if p0.lower() in self.RESERVED_PATHS:
+                return {"ok": False,
+                        "error": "「%s」和现有地址冲突，换一个" % p0}
+            body["custom_path"] = p0
+
+        cur.update({k: v for k, v in body.items() if k in cur})
         saved = A.save_settings(cur, path)
+        CFG["custom_path"] = "/" + str(saved.get("custom_path") or "custom")
         return {"ok": True, "settings": saved}
 
     ADD_LIMIT = 10          # 一次最多加几个配置接口
@@ -2411,6 +2456,12 @@ def main():
     except Exception as _e:
         print("!! 初始化数据目录失败：%s" % _e)
 
+    try:
+        CFG["custom_path"] = "/" + str(A.load_settings(
+            os.path.join(os.path.dirname(os.path.abspath(a.seeds)),
+                         "settings.json")).get("custom_path") or "custom").strip("/")
+    except Exception:
+        CFG["custom_path"] = "/custom"
     CFG.update(seeds=a.seeds, out=a.out, state=a.state, workers=a.workers,
                timeout=a.timeout, drop_after=a.drop_after, token=a.token,
                base_url=a.base_url, interval=max(a.interval, 0) * 3600)
