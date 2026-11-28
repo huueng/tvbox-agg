@@ -86,6 +86,8 @@ def load_cfg(data_dir):
     doc.setdefault("token", "")
     doc.setdefault("roots", [])
     doc.setdefault("as_home", 0)
+    doc.setdefault("public_url", "")     # Alist 的对外地址（反代域名），留空用原地址
+    doc.setdefault("relay", 0)           # 1 = 播放走本容器转发
     doc["url"] = str(doc.get("url") or "").rstrip("/")
     doc["roots"] = _norm_roots(doc.get("roots"))
     _CFG_CACHE.update(ts=now, doc=doc)
@@ -97,6 +99,8 @@ def save_cfg(data_dir, doc):
     doc = dict(doc or {})
     doc["url"] = str(doc.get("url") or "").strip().rstrip("/")
     doc["roots"] = _norm_roots(doc.get("roots"))
+    doc["public_url"] = str(doc.get("public_url") or "").strip().rstrip("/")
+    doc["relay"] = 1 if doc.get("relay") else 0
     doc["as_home"] = 1 if doc.get("as_home") else 0
     ST.save_file(cfg_path(data_dir), doc)
     _CFG_CACHE.update(ts=0.0, doc=None)
@@ -278,13 +282,31 @@ def _leaf_files(cfg, path, depth=2):
     return out
 
 
-def _play_url(cfg, files, limit=MAX_ITEMS):
+def play_link(cfg, path, base=""):
+    """给客户端用的播放地址
+
+    三种情况：
+      1) relay=1 且知道本服务的对外地址 → 走本容器转发 /alist/p（客户端只需要能访问我们）
+      2) 配了 public_url（Alist 自己的反代域名）→ 把内网前缀换成它
+      3) 都没有 → 原样返回，只能局域网播
+    """
+    if int(cfg.get("relay") or 0) and base:
+        raw = base64.urlsafe_b64encode(str(path).encode()).decode().rstrip("=")
+        return "%s/alist/p?p=%s" % (base.rstrip("/"), raw)
+    u = raw_url(cfg, path)
+    pub = cfg.get("public_url") or ""
+    if u and pub and cfg.get("url") and u.startswith(cfg["url"]):
+        return pub + u[len(cfg["url"]):]
+    return u
+
+
+def _play_url(cfg, files, limit=MAX_ITEMS, base=""):
     """并发取直链，拼成 vod_play_url"""
     files = [f for f in files if f[1]][:limit]
     if not files:
         return ""
     with cf.ThreadPoolExecutor(max_workers=6) as ex:
-        urls = list(ex.map(lambda f: raw_url(cfg, f[1]), files))
+        urls = list(ex.map(lambda f: play_link(cfg, f[1], base), files))
     parts = []
     for (nm, _p), u in zip(files, urls):
         if not u:
@@ -297,7 +319,7 @@ def _play_url(cfg, files, limit=MAX_ITEMS):
 
 # ------------------------------------------------------------------ CMS 协议
 
-def cms(data_dir, params):
+def cms(data_dir, params, base=""):
     """按 ac= 分发，返回苹果CMS风格的 dict"""
     cfg = load_cfg(data_dir)
     if not (cfg.get("url") and cfg.get("roots")):
@@ -317,12 +339,12 @@ def cms(data_dir, params):
         # 乡村爱情 S01 下面全是 01.mp4 这种文件，没有子目录，之前就被误判成单文件了
         if _ext(path) in (VIDEO_EXT | AUDIO_EXT):
             name = os.path.splitext(os.path.basename(path))[0]
-            u = raw_url(cfg, path)
+            u = play_link(cfg, path, base=base)
             return {"list": [{"vod_id": ids, "vod_name": name, "vod_pic": "",
                               "vod_play_from": "网盘",
                               "vod_play_url": ("正片$" + u) if u else ""}]}
         files = _leaf_files(cfg, path)
-        purl = _play_url(cfg, files)
+        purl = _play_url(cfg, files, base=base)
         return {"list": [{"vod_id": ids,
                           "vod_name": os.path.basename(path.rstrip("/")),
                           "vod_pic": "", "vod_play_from": "网盘",

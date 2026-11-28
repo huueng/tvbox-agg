@@ -1528,6 +1528,7 @@ SETTING_DEFAULTS = {
     "ltv_cms": 100,          # LibreTV 输出多少个 CMS 接口
     "embed_lives": 1,        # 把央视+卫视写进 tvbox.json 的 lives（客户端直播页直接可用）
     "update_mirror": "",     # 检查更新用的镜像/加速地址，留空只查官方 GHCR
+    "base_url": "",          # 对外地址（域名/反代），优先于环境变量 BASE_URL
     "interval_mode": "daily",  # 聚合间隔：hours=每N小时 / daily=每天某点
     "interval_hours": 12,
     "daily_at": "03:30",

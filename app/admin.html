@@ -390,6 +390,7 @@ td.ops .mini{margin-right:2px}
     <div class="si"><span>每天几点聚合</span><input id="s_daily_at" type="text" placeholder="03:30" style="width:100px"></div>
     <div class="si"><span>每几小时聚合(0=关闭)</span><input id="s_interval_hours" type="number" min="0" max="168"></div>
     <div class="si"><span>扩展资源测速间隔(小时)</span><input id="s_speed_hours" type="number" min="1" max="168"></div>
+    <div class="si"><span>对外地址（反代域名，留空自动探测）</span><input id="s_base_url" type="text" style="width:300px" placeholder="https://agg.example.com:812"></div>
     <div class="si"><span>镜像/加速地址（检查更新用）</span><input id="s_update_mirror" type="text" style="width:280px" placeholder="ghcr.nju.edu.cn/huueng/tvbox-agg"></div>
   </div>
 
@@ -407,6 +408,18 @@ td.ops .mini{margin-right:2px}
     <div class="si"><span>首站的名字</span><input id="s_stamp_suffix" type="text" style="width:130px" placeholder="豆瓣 / 网盘"></div>
     <div class="si"><span>Alist 地址</span><input id="s_alist_url" type="text" style="width:260px" placeholder="http://192.168.1.4:5255"></div>
     <div class="si"><span>令牌</span><input id="s_alist_token" type="password" style="width:260px" placeholder="Alist 后台 → 设置 → 其他 → 令牌"></div>
+    <div class="si"><span>Alist 外部地址（有反代就填）</span><input id="s_alist_public" type="text" style="width:260px" placeholder="https://pan.example.com"></div>
+    <div class="si"><span>播放走本容器转发</span><select id="s_alist_relay" style="width:190px">
+      <option value="0">否，直连 Alist 地址</option>
+      <option value="1">是，网盘视频由容器转发</option>
+    </select></div>
+  </div>
+  <div class="mut" style="font-size:11px;margin-top:6px;line-height:1.7">
+    <b>播放地址怎么给客户端</b>：<br>
+    ① 填了「Alist 外部地址」→ 直链换成这个域名（推荐，不占容器资源）<br>
+    ② 没填、又开了「播放走本容器转发」→ 直链变成 <code>你的对外地址/alist/p?p=…</code>，
+    容器替客户端去取流（局域网内不额外占网卡，只是多一次内存拷贝）<br>
+    ③ 都不填 → 直链就是 Alist 自己的地址，<b>只能在局域网播放</b>
   </div>
   <div style="margin-top:8px">
     <div class="mut" style="font-size:11px">要挂的目录，一行一个（每个子目录会变成一个分类 Tab）</div>
@@ -415,6 +428,7 @@ td.ops .mini{margin-right:2px}
   </div>
   <div class="row" style="margin-top:8px;align-items:center">
     <button onclick="testAlist(this)">测试连接</button>
+    <button onclick="testAlistPublic(this)">测试外部地址</button>
     <button class="pri" onclick="saveAlist(this)">保存网盘配置</button>
     <span id="alistTip" class="mut" style="font-size:11px"></span>
   </div>
@@ -1405,6 +1419,8 @@ async function loadAlist(){
     const r = await (await fetch('/api/alist', {cache:'no-store'})).json();
     document.getElementById('s_alist_url').value   = r.url || '';
     document.getElementById('s_alist_token').value = r.token || '';
+    document.getElementById('s_alist_public').value = r.public_url || '';
+    document.getElementById('s_alist_relay').value = String(r.relay || 0);
     document.getElementById('s_alist_roots').value = (r.roots || []).join('\n');
     if(r.url && (r.roots||[]).length){
       document.getElementById('alistTip').innerHTML =
@@ -1417,7 +1433,9 @@ function _alistBody(){
   return {
     url:   document.getElementById('s_alist_url').value.trim(),
     token: document.getElementById('s_alist_token').value.trim(),
-    roots: document.getElementById('s_alist_roots').value
+    roots: document.getElementById('s_alist_roots').value,
+    public_url: document.getElementById('s_alist_public').value.trim(),
+    relay: parseInt(document.getElementById('s_alist_relay').value, 10) || 0
   };
 }
 
@@ -1430,6 +1448,21 @@ async function testAlist(btn){
     if(r.error){ tip.innerHTML = '<span class="bad">' + esc(r.error) + '</span>'; return; }
     tip.innerHTML = '<span class="ok">✓ 连上了</span>，分类：' +
       (r.classes || []).map(c => esc(c.name)).join(' / ');
+  }catch(e){ tip.innerHTML = '<span class="bad">出错：' + e + '</span>'; }
+  finally{ done(); }
+}
+
+async function testAlistPublic(btn){
+  const tip = document.getElementById('alistTip');
+  const done = tick(btn, '探测中');
+  const body = _alistBody();
+  if(!body.public_url){ tip.innerHTML = '<span class="bad">先填 Alist 外部地址</span>'; done(); return; }
+  tip.innerHTML = '正在从容器访问 ' + esc(body.public_url) + ' …';
+  try{
+    const r = await api('/api/alist/test', {public_url: body.public_url, probe_public: 1});
+    tip.innerHTML = r.ok
+      ? '<span class="ok">✓ ' + esc(r.note || '可达') + '</span>'
+      : '<span class="bad">' + esc(r.error || '不可达') + '</span>';
   }catch(e){ tip.innerHTML = '<span class="bad">出错：' + e + '</span>'; }
   finally{ done(); }
 }
@@ -1448,7 +1481,7 @@ async function saveAlist(btn){
 
 async function saveSettings(){
   const body = {};
-  for(const k of ['interval_mode','daily_at','sort_mode','stamp_suffix','update_mirror','home_site','custom_path','custom_name','custom_home']){
+  for(const k of ['interval_mode','daily_at','sort_mode','stamp_suffix','update_mirror','base_url','home_site','custom_path','custom_name','custom_home']){
     const el2 = document.getElementById('s_' + k);
     if(el2) body[k] = (el2.value || '').trim();
   }

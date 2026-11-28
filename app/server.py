@@ -47,6 +47,8 @@ import threading
 import concurrent.futures as cf
 import time
 import urllib.parse
+import urllib.request
+import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import aggregate as A
@@ -685,7 +687,8 @@ def cms_fetch(key, query_pairs):
     if key in ("alist_netdisk", "alist"):
         try:
             doc = AL.cms(_data_dir0(), dict(query_pairs) if isinstance(
-                query_pairs, dict) else _pairs_dict(query_pairs))
+                query_pairs, dict) else _pairs_dict(query_pairs),
+                base=CFG.get("proxy_base") or CFG.get("base_url") or "")
         except Exception as e:                        # noqa: BLE001
             doc = {"class": [], "list": [], "msg": "网盘接口出错：%s" % e}
         # 注意 cms_fetch 的返回是 (ctype, payload, cached) 三元组
@@ -879,12 +882,26 @@ class Handler(BaseHTTPRequestHandler):
         req_base = self._req_base()
         if cfg_base and req_base and req_base != cfg_base:
             text = text.replace(cfg_base + "/cms/", req_base + "/cms/")
+            # 网盘站点也要跟着走：从域名访问就给域名地址，从内网访问给内网地址
+            text = text.replace(cfg_base + "/alist", req_base + "/alist")
         return text
 
     def _base(self):
+        """客户端访问我们用的地址（拼配置里的绝对地址时用）
+
+        优先跟随这一次请求的 Host：从内网访问就给内网地址、从域名访问就给域名，
+        这样同一个容器两边都能用。Host 是本机回环时才退回 BASE_URL。
+        """
+        host = self.headers.get("Host") or ""
+        h0 = host.split(":")[0].lower()
+        if host and h0 not in ("127.0.0.1", "localhost", "::1"):
+            proto = (self.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip()
+            if not proto:
+                proto = "https" if self.headers.get("X-Forwarded-Ssl") == "on" else "http"
+            return proto + "://" + host
         if CFG["base_url"]:
             return CFG["base_url"].rstrip("/")
-        host = self.headers.get("Host") or ("%s:%s" % self.server.server_address)
+        host = "%s:%s" % self.server.server_address
         return "http://" + host
 
     def _loc(self, target):
@@ -1097,12 +1114,17 @@ class Handler(BaseHTTPRequestHandler):
                                                   (LIVE_RUN["mode"] or "未知")})
             run_async()
             return self._send(202, {"started": True})
+        # 网盘播放转发：客户端只访问我们，视频流由容器转给 OpenList
+        if path in ("/alist/p", "/alist/p/"):
+            return self._alist_relay(urllib.parse.parse_qs(
+                urllib.parse.urlsplit(self.path).query, keep_blank_values=True))
         # 网盘（Alist）：伪装成苹果CMS接口，客户端当普通采集站用
         if path in ("/alist", "/alist/"):
             _pr = urllib.parse.parse_qs(
                 urllib.parse.urlsplit(self.path).query, keep_blank_values=True)
             try:
-                return self._send(200, AL.cms(self._data_dir(), _pr))
+                return self._send(200, AL.cms(self._data_dir(), _pr,
+                                              base=self._base()))
             except Exception as e:                        # noqa: BLE001
                 return self._send(500, {"class": [], "list": [],
                                         "msg": "网盘接口出错：%s" % e})
@@ -1241,6 +1263,31 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/api/alist", "/api/alist/test"):
                 d = self._data_dir()
                 if path == "/api/alist/test":
+                    if body.get("probe_public"):
+                        pu = str(body.get("public_url") or "").strip()
+                        if not pu:
+                            return self._send(400, {"ok": False,
+                                                    "error": "先填 Alist 外部地址"})
+                        try:
+                            r = urllib.request.urlopen(
+                                urllib.request.Request(
+                                    pu.rstrip("/") + "/api/public/settings",
+                                    method="HEAD"), timeout=12)
+                            return self._send(200, {
+                                "ok": True, "status": r.status,
+                                "note": "外部地址可达（HTTP %s）" % r.status})
+                        except urllib.error.HTTPError as e:
+                            # 401/403 也算通 —— 说明反代正常，只是要登录
+                            okk = e.code in (401, 403, 404)
+                            return self._send(200, {
+                                "ok": okk,
+                                "note": "外部地址可达（HTTP %s）" % e.code
+                                        if okk else None,
+                                "error": None if okk else "HTTP %s" % e.code})
+                        except Exception as e:            # noqa: BLE001
+                            return self._send(200, {
+                                "ok": False,
+                                "error": "连不上：%s" % type(e).__name__})
                     cand = {"url": str(body.get("url") or "").strip(),
                             "token": str(body.get("token") or "").strip(),
                             "roots": [str(x).strip() for x in
@@ -1265,6 +1312,8 @@ class Handler(BaseHTTPRequestHandler):
                     "url": body.get("url"),
                     "token": body.get("token"),
                     "roots": str(body.get("roots") or "").splitlines(),
+                    "public_url": body.get("public_url"),
+                    "relay": body.get("relay"),
                     "as_home": body.get("as_home")})
                 return self._send(200, {"ok": True, "alist": doc})
             if path == "/api/mirrors":
@@ -1754,6 +1803,62 @@ class Handler(BaseHTTPRequestHandler):
         rows.sort(key=lambda x: -x["sites"])
         return rows[:200]
 
+    def _alist_relay(self, params):
+        """把网盘的视频流转发给客户端
+
+        为什么要这一层：网盘直链是 Alist 自己的地址，客户端在外网访问不到。
+        转发的代价是容器多一次内存拷贝；局域网内不额外占网卡（回环）。
+        支持 Range，电视拖进度条才正常。
+        """
+        import urllib.error
+        d = self._data_dir()
+        cfg = AL.load_cfg(d)
+        raw = (params.get("p") or [""])[0]
+        path = AL.pid(raw)
+        if not path:
+            return self._send(400, {"error": "缺 p 参数"})
+        url = AL.raw_url(cfg, path)
+        if not url:
+            return self._send(404, {"error": "取不到直链（文件可能已被移动）"})
+
+        hdrs = {"User-Agent": "TVBoxAgg"}
+        rng = self.headers.get("Range")
+        if rng:
+            hdrs["Range"] = rng
+        try:
+            up = urllib.request.urlopen(urllib.request.Request(url, headers=hdrs),
+                                        timeout=30)
+        except urllib.error.HTTPError as e:
+            up = e                      # 206 / 416 也照原样转回去
+        except Exception as e:          # noqa: BLE001
+            return self._send(502, {"error": "连不上网盘：%s" % e})
+
+        try:
+            code = getattr(up, "status", None) or getattr(up, "code", 200)
+            self.send_response(code)
+            for k in ("Content-Type", "Content-Length", "Content-Range",
+                      "Last-Modified", "ETag"):
+                v = up.headers.get(k)
+                if v:
+                    self.send_header(k, v)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            while True:
+                chunk = up.read(64 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass                        # 电视拖进度 / 切台时会直接断开
+        except Exception as e:          # noqa: BLE001
+            log("网盘转发中断：%s" % e)
+        finally:
+            try:
+                up.close()
+            except Exception:
+                pass
+
     def _live_overview(self):
         """直播侧状态：正在跑什么、上次大/小聚合是什么时候"""
         try:
@@ -1900,10 +2005,24 @@ class Handler(BaseHTTPRequestHandler):
                         "error": "「%s」和现有地址冲突，换一个" % p0}
             body["custom_path"] = p0
 
+        # 对外地址：改了要立刻生效（否则配置里的站点地址还是旧的）
+        if "base_url" in body:
+            nb = str(body.get("base_url") or "").strip().rstrip("/")
+            if nb and not re.match(r"^https?://", nb):
+                return {"ok": False, "error": "对外地址要以 http:// 或 https:// 开头"}
+            body["base_url"] = nb
+
         cur.update({k: v for k, v in body.items() if k in cur})
         saved = A.save_settings(cur, path)
         CFG["custom_path"] = "/" + str(saved.get("custom_path") or "custom")
-        return {"ok": True, "settings": saved}
+
+        _nb = str(saved.get("base_url") or "").strip().rstrip("/")
+        if _nb:
+            CFG["base_url"] = _nb
+            if CFG.get("proxy_on"):
+                CFG["proxy_base"] = _nb
+        return {"ok": True, "settings": saved, "effective_base":
+                CFG.get("proxy_base") or CFG.get("base_url") or ""}
 
     ADD_LIMIT = 10          # 一次最多加几个配置接口
 
@@ -2465,8 +2584,13 @@ def main():
     CFG.update(seeds=a.seeds, out=a.out, state=a.state, workers=a.workers,
                timeout=a.timeout, drop_after=a.drop_after, token=a.token,
                base_url=a.base_url, interval=max(a.interval, 0) * 3600)
-    # 对外地址：BASE_URL 优先；没填就猜局域网 IP（写 127.0.0.1 的话电视会连自己）
-    base = a.base_url.rstrip("/")
+    # 对外地址：设置 > 环境变量 > 自动探测（写 127.0.0.1 的话电视会连自己）
+    try:
+        _stg0 = A.load_settings(os.path.join(
+            os.path.dirname(os.path.abspath(a.seeds)), "settings.json"))
+    except Exception:
+        _stg0 = {}
+    base = str(_stg0.get("base_url") or a.base_url or "").strip().rstrip("/")
     _auto = False
     if not base:
         host = a.bind if a.bind not in ("0.0.0.0", "::") else (guess_lan_ip() or "")
@@ -2477,6 +2601,7 @@ def main():
             base = "http://127.0.0.1:%s" % a.port
             print("!! 猜不到局域网地址，配置里会写成 %s —— 电视将无法访问，"
                   "请设 BASE_URL=http://<本机IP>:%s" % (base, a.port))
+    CFG["proxy_on"] = bool(a.proxy)
     if a.proxy:
         CFG["proxy_base"] = base
         if _auto:
