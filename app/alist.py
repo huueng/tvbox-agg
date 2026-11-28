@@ -338,7 +338,7 @@ def _leaf_files(cfg, path, depth=2):
     return out
 
 
-def play_link(cfg, path, base=""):
+def play_link(cfg, path, base="", data_dir=None):
     """给客户端用的播放地址
 
     三种情况：
@@ -347,8 +347,11 @@ def play_link(cfg, path, base=""):
       3) 都没有 → 原样返回，只能局域网播
     """
     if int(cfg.get("relay") or 0) and base:
-        raw = base64.urlsafe_b64encode(str(path).encode()).decode().rstrip("=")
-        return "%s/alist/p?p=%s" % (base.rstrip("/"), raw)
+        # 带上扩展名：播放器靠后缀决定用视频解码还是当音频放
+        # （没有后缀时，有的客户端会只出声音不出画面）
+        nid = tid(path, data_dir)
+        ext = _ext(path) or ".mp4"
+        return "%s/alist/p/%s%s" % (base.rstrip("/"), nid, ext)
     u = raw_url(cfg, path)
     pub = cfg.get("public_url") or ""
     if u and pub and cfg.get("url") and u.startswith(cfg["url"]):
@@ -356,13 +359,13 @@ def play_link(cfg, path, base=""):
     return u
 
 
-def _play_url(cfg, files, limit=MAX_ITEMS, base=""):
+def _play_url(cfg, files, limit=MAX_ITEMS, base="", data_dir=None):
     """并发取直链，拼成 vod_play_url"""
     files = [f for f in files if f[1]][:limit]
     if not files:
         return ""
     with cf.ThreadPoolExecutor(max_workers=6) as ex:
-        urls = list(ex.map(lambda f: play_link(cfg, f[1], base), files))
+        urls = list(ex.map(lambda f: play_link(cfg, f[1], base, data_dir), files))
     parts = []
     for (nm, _p), u in zip(files, urls):
         if not u:
@@ -397,12 +400,12 @@ def cms(data_dir, params, base=""):
         # 乡村爱情 S01 下面全是 01.mp4 这种文件，没有子目录，之前就被误判成单文件了
         if _ext(path) in (VIDEO_EXT | AUDIO_EXT):
             name = os.path.splitext(os.path.basename(path))[0]
-            u = play_link(cfg, path, base=base)
+            u = play_link(cfg, path, base=base, data_dir=data_dir)
             return {"list": [{"vod_id": ids, "vod_name": name, "vod_pic": "",
                               "vod_play_from": "网盘",
                               "vod_play_url": ("正片$" + u) if u else ""}]}
         files = _leaf_files(cfg, path)
-        purl = _play_url(cfg, files, base=base)
+        purl = _play_url(cfg, files, base=base, data_dir=data_dir)
         return {"list": [{"vod_id": ids,
                           "vod_name": os.path.basename(path.rstrip("/")),
                           "vod_pic": "", "vod_play_from": "网盘",

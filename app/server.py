@@ -1129,9 +1129,14 @@ class Handler(BaseHTTPRequestHandler):
                                       keep_blank_values=True),
                 self._data_dir()), "text/html; charset=utf-8")
         # 网盘播放转发：客户端只访问我们，视频流由容器转给 OpenList
+        # 两种写法都收：/alist/p/18.mp4（带后缀，客户端更认）和 /alist/p?p=18
         if path in ("/alist/p", "/alist/p/"):
             return self._alist_relay(urllib.parse.parse_qs(
                 urllib.parse.urlsplit(self.path).query, keep_blank_values=True))
+        if path.startswith("/alist/p/"):
+            _name = path[len("/alist/p/"):]
+            _id = _name.rsplit(".", 1)[0] if "." in _name else _name
+            return self._alist_relay({"p": [_id]})
         # 网盘（Alist）：伪装成苹果CMS接口，客户端当普通采集站用
         if path in ("/alist", "/alist/"):
             _pr = urllib.parse.parse_qs(
