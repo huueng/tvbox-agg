@@ -2445,7 +2445,19 @@ def run_pipeline(seeds_path=None, out_dir=None, workers=3, timeout=20,
         for _doc in (tvbox, allp):
             embed_lives(_doc, data_dir, lines_per=int(stg.get("live_lines_per") or 4))
     _suffix = str(stg.get("stamp_suffix") or "豆瓣").strip() or "豆瓣"
-    if int(stg.get("douban_first", 1)):
+    # 网盘（Alist）：做成一个普通 CMS 站点。as_home=1 时顶掉豆瓣当首页
+    _asite, _ahome = None, 0
+    try:
+        import alist as _AL
+        _cfg_a = _AL.load_cfg(data_dir)
+        _ahome = int(_cfg_a.get("as_home") or 0)
+        _asite = _AL.site_entry(data_dir, proxy_base or "")
+    except Exception as e:                              # noqa: BLE001
+        log("  跳过网盘站点：%s" % e)
+    if _asite:
+        _asite = {k: v for k, v in _asite.items() if not str(k).startswith("_")}
+
+    if int(stg.get("douban_first", 1)) and not _ahome:
         for _doc in (tvbox, allp):
             _jar = pick_douban_jar(_doc.get("sites") or [], log=log,
                                    cache_dir=data_dir)
@@ -2456,6 +2468,20 @@ def run_pipeline(seeds_path=None, out_dir=None, workers=3, timeout=20,
             _doc["spider"] = _jar
             if insert_douban(_doc, _suffix):
                 log("  首个站点：内置豆瓣（spider=%s）" % _jar[-34:])
+    if _asite:
+        for _doc in (tvbox, direct, allp):
+            _sites = [x for x in (_doc.get("sites") or [])
+                      if x.get("key") != _asite["key"]]
+            if _ahome:
+                _sites = [x for x in _sites if x.get("key") != "douban"]
+                _sites.insert(0, dict(_asite))
+            else:
+                pos = 1 if _sites and _sites[0].get("key") == "douban" else 0
+                _sites.insert(pos, dict(_asite))
+            _doc["sites"] = _sites
+        log("  网盘站点：%s%s" % ("作为首站（顶掉豆瓣）" if _ahome else "排在豆瓣之后",
+                                ""))
+
     stamp = (time.strftime("%Y-%m-%d  %H:%M")
              if int(stg.get("stamp_name", 1)) else "")
     for _doc in (tvbox, direct, allp):

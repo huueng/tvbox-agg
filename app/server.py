@@ -50,6 +50,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import aggregate as A
+import alist as AL
 import live as L
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -84,6 +85,30 @@ CFG = {
     "base_url": "",
     "proxy_base": "",      # 非空 → TVBox 输出走 /cms/<key> 透明代理
 }
+
+
+def guess_lan_ip():
+    """猜本机在局域网的地址
+
+    开 /cms 代理时要把站点地址写进配置，如果写成 127.0.0.1，
+    电视拿到配置后就去连它自己了 —— 必须给一个电视能访问的地址。
+    用 UDP 连一下公网地址，看内核选了哪张网卡（不会真发包）。
+    """
+    import socket
+    s = None
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
+        s.connect(("223.5.5.5", 80))
+        ip = s.getsockname()[0]
+        return "" if ip.startswith("127.") else ip
+    except Exception:
+        return ""
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
 
 
 def log(msg):
@@ -988,6 +1013,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 _s = {}
             return self._send(200, check_update(str(_s.get("update_mirror") or "")))
+        if path == "/api/alist":          # 读网盘配置（含令牌，必须登录）
+            return self._send(200, AL.load_cfg(self._data_dir()))
         if path == "/api/msg/list":
             items = msg_load(self._data_dir())
             items = sorted(items, key=lambda x: (0 if x.get("pinned") else 1,
@@ -1039,6 +1066,15 @@ class Handler(BaseHTTPRequestHandler):
                                                   (LIVE_RUN["mode"] or "未知")})
             run_async()
             return self._send(202, {"started": True})
+        # 网盘（Alist）：伪装成苹果CMS接口，客户端当普通采集站用
+        if path in ("/alist", "/alist/"):
+            _pr = urllib.parse.parse_qs(
+                urllib.parse.urlsplit(self.path).query, keep_blank_values=True)
+            try:
+                return self._send(200, AL.cms(self._data_dir(), _pr))
+            except Exception as e:                        # noqa: BLE001
+                return self._send(500, {"class": [], "list": [],
+                                        "msg": "网盘接口出错：%s" % e})
         if path.startswith("/cms/"):
             key = path[5:]
             pairs = urllib.parse.parse_qsl(
@@ -1171,6 +1207,35 @@ class Handler(BaseHTTPRequestHandler):
                         log("重建失败：%s" % e)
                 threading.Thread(target=_rebuild, daemon=True).start()
                 return self._send(200, {"ok": True, "started": True})
+            if path in ("/api/alist", "/api/alist/test"):
+                d = self._data_dir()
+                if path == "/api/alist/test":
+                    cand = {"url": str(body.get("url") or "").strip(),
+                            "token": str(body.get("token") or "").strip(),
+                            "roots": [str(x).strip() for x in
+                                      str(body.get("roots") or "").splitlines()
+                                      if str(x).strip()]}
+                    if not cand["url"]:
+                        return self._send(400, {"ok": False, "error": "先填地址"})
+                    try:
+                        cls = AL._classes(cand)
+                    except Exception as e:                # noqa: BLE001
+                        return self._send(200, {"ok": False,
+                                                "error": "连不上：%s" % e})
+                    if not cls:
+                        return self._send(200, {
+                            "ok": False,
+                            "error": "连上了，但这些目录里没有子目录或视频文件"})
+                    return self._send(200, {"ok": True, "classes": [
+                        {"name": c["type_name"]} for c in cls]})
+                if body.get("url") is None:
+                    return self._send(200, AL.load_cfg(d))
+                doc = AL.save_cfg(d, {
+                    "url": body.get("url"),
+                    "token": body.get("token"),
+                    "roots": str(body.get("roots") or "").splitlines(),
+                    "as_home": body.get("as_home")})
+                return self._send(200, {"ok": True, "alist": doc})
             if path == "/api/mirrors":
                 import discover as D
                 if body.get("mirrors") is None:
@@ -2331,13 +2396,22 @@ def main():
     CFG.update(seeds=a.seeds, out=a.out, state=a.state, workers=a.workers,
                timeout=a.timeout, drop_after=a.drop_after, token=a.token,
                base_url=a.base_url, interval=max(a.interval, 0) * 3600)
+    # 对外地址：BASE_URL 优先；没填就猜局域网 IP（写 127.0.0.1 的话电视会连自己）
+    base = a.base_url.rstrip("/")
+    _auto = False
+    if not base:
+        host = a.bind if a.bind not in ("0.0.0.0", "::") else (guess_lan_ip() or "")
+        if host:
+            base = "http://%s:%s" % (host, a.port)
+            _auto = True
+        else:
+            base = "http://127.0.0.1:%s" % a.port
+            print("!! 猜不到局域网地址，配置里会写成 %s —— 电视将无法访问，"
+                  "请设 BASE_URL=http://<本机IP>:%s" % (base, a.port))
     if a.proxy:
-        base = a.base_url.rstrip("/")
-        if not base:
-            base = "http://%s:%s" % ("127.0.0.1" if a.bind in ("0.0.0.0", "::")
-                                     else a.bind, a.port)
-            print("!! 开了 --proxy 但没给 --base-url，站点地址会写成 %s" % base)
         CFG["proxy_base"] = base
+        if _auto:
+            print("  对外地址  %s（自动探测；多网卡或反代请设 BASE_URL）" % base)
     os.makedirs(CFG["out"], exist_ok=True)
     load_cache()
     global AUTH_PATH
@@ -2402,8 +2476,7 @@ def main():
     CACHE.setdefault("libretv", CACHE.get("ltv") or {})
     n_sites = len(CACHE["tvbox"].get("sites", []))
     n_src = len((CACHE.get("ltv") or {}).get("sources", []))
-    base = CFG["base_url"].rstrip("/") or ("http://%s:%s" % (
-        "127.0.0.1" if a.bind in ("0.0.0.0", "::") else a.bind, a.port))
+
     print("TVBox 聚合器服务启动", flush=True)
     print("  监听      %s:%s" % (a.bind, a.port), flush=True)
     _all = CACHE.get("all") or {}

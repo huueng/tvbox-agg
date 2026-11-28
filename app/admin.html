@@ -396,6 +396,30 @@ td.ops .mini{margin-right:2px}
     <div class="si"><span>镜像/加速地址（检查更新用）</span><input id="s_update_mirror" type="text" style="width:280px" placeholder="ghcr.nju.edu.cn/huueng/tvbox-agg"></div>
   </div>
 
+  <h3 class="setgrp">网盘（Alist / OpenList）</h3>
+  <div class="mut" style="font-size:11px;margin-bottom:8px">
+    把网盘目录做成一个普通采集站：客户端里会多出「网盘」分类，点开就是目录，点剧名选剧集。
+    令牌只存在容器里，不会写进导出的备份文件。
+  </div>
+  <div class="setv">
+    <div class="si"><span>Alist 地址</span><input id="s_alist_url" type="text" style="width:260px" placeholder="http://192.168.1.4:5255"></div>
+    <div class="si"><span>令牌</span><input id="s_alist_token" type="password" style="width:260px" placeholder="Alist 后台 → 设置 → 其他 → 令牌"></div>
+    <div class="si"><span>作为首页（顶掉豆瓣）</span><select id="s_alist_home" style="width:110px">
+      <option value="0">否，排在豆瓣后面</option>
+      <option value="1">是，放第一个</option>
+    </select></div>
+  </div>
+  <div style="margin-top:8px">
+    <div class="mut" style="font-size:11px">要挂的目录，一行一个（每个子目录会变成一个分类 Tab）</div>
+    <textarea id="s_alist_roots" rows="3" style="width:100%;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:12px"
+      placeholder="/ssd128/mp4&#10;/music"></textarea>
+  </div>
+  <div class="row" style="margin-top:8px;align-items:center">
+    <button onclick="testAlist(this)">测试连接</button>
+    <button class="pri" onclick="saveAlist(this)">保存网盘配置</button>
+    <span id="alistTip" class="mut" style="font-size:11px"></span>
+  </div>
+
   <div class="mut" id="rulesInfo" style="margin-top:12px;font-size:11px"></div>
   <div class="row" style="margin-top:12px">
     <button class="pri" onclick="saveSettings()">保存设置</button>
@@ -969,6 +993,7 @@ async function loadAll(){
     const h = await (await fetch('/api/history')).json();
     drawSpark(h.rows || []);
   }catch(e){}
+  loadAlist();
 }
 
 function drawSpark(rows){
@@ -1348,6 +1373,54 @@ async function act(action, url){
   const r = await api('/api/override', {url, action});
   toast(r.error ? r.error : (map[action] + ' 已生效（下一轮聚合应用）'), !!r.error);
   loadAll();
+}
+
+async function loadAlist(){
+  try{
+    const r = await (await fetch('/api/alist', {cache:'no-store'})).json();
+    document.getElementById('s_alist_url').value   = r.url || '';
+    document.getElementById('s_alist_token').value = r.token || '';
+    document.getElementById('s_alist_home').value  = String(r.as_home || 0);
+    document.getElementById('s_alist_roots').value = (r.roots || []).join('\n');
+    if(r.url && (r.roots||[]).length){
+      document.getElementById('alistTip').innerHTML =
+        '<span class="ok">已配置</span> ｜ ' + (r.roots||[]).length + ' 个目录';
+    }
+  }catch(e){}
+}
+
+function _alistBody(){
+  return {
+    url:   document.getElementById('s_alist_url').value.trim(),
+    token: document.getElementById('s_alist_token').value.trim(),
+    roots: document.getElementById('s_alist_roots').value,
+    as_home: parseInt(document.getElementById('s_alist_home').value, 10) || 0
+  };
+}
+
+async function testAlist(btn){
+  const tip = document.getElementById('alistTip');
+  const done = tick(btn, '连接中');
+  tip.innerHTML = '正在连 Alist…';
+  try{
+    const r = await api('/api/alist/test', _alistBody());
+    if(r.error){ tip.innerHTML = '<span class="bad">' + esc(r.error) + '</span>'; return; }
+    tip.innerHTML = '<span class="ok">✓ 连上了</span>，分类：' +
+      (r.classes || []).map(c => esc(c.name)).join(' / ');
+  }catch(e){ tip.innerHTML = '<span class="bad">出错：' + e + '</span>'; }
+  finally{ done(); }
+}
+
+async function saveAlist(btn){
+  const tip = document.getElementById('alistTip');
+  const done = tick(btn, '保存中');
+  try{
+    const r = await api('/api/alist', _alistBody());
+    if(r.error){ tip.innerHTML = '<span class="bad">保存失败：' + esc(r.error) + '</span>'; return; }
+    tip.innerHTML = '<span class="ok">✓ 已保存</span>，下一轮聚合生效（点「立即聚合 · 点播」马上生效）';
+    toast('网盘配置已保存');
+  }catch(e){ tip.innerHTML = '<span class="bad">出错：' + e + '</span>'; }
+  finally{ done(); }
 }
 
 async function saveSettings(){
