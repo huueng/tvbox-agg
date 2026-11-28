@@ -662,6 +662,13 @@ def _cms_count(body):
         return 0
 
 
+def _pairs_dict(pairs):
+    out = {}
+    for k, v in pairs or []:
+        out.setdefault(k, []).append(v)
+    return out
+
+
 def cms_fetch(key, query_pairs):
     """透明代理：把客户端发来的参数翻成上游认的名字，再原样返回
 
@@ -670,6 +677,17 @@ def cms_fetch(key, query_pairs):
     2) 未知方言：先按 t 发，空了就换 type_id 再发一次，谁有数据记住谁
     这样即使体检时 ac=list 超时漏探，第一次点分类也能自动纠正。
     """
+    # 影视仓会把 type=1 站点的 api 改写成 <它自己>/cms/<key>，
+    # 网盘站点也躲不过，所以这里要把 alist 的 key 接住，转给我们自己的 /alist
+    if key in ("alist_netdisk", "alist"):
+        try:
+            doc = AL.cms(_data_dir0(), dict(query_pairs) if isinstance(
+                query_pairs, dict) else _pairs_dict(query_pairs))
+        except Exception as e:                        # noqa: BLE001
+            doc = {"class": [], "list": [], "msg": "网盘接口出错：%s" % e}
+        # 注意 cms_fetch 的返回是 (ctype, payload, cached) 三元组
+        return ("application/json; charset=utf-8",
+                json.dumps(doc, ensure_ascii=False).encode("utf-8"), False)
     info = site_table().get(key)
     if not info:
         return None

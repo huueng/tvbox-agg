@@ -350,9 +350,6 @@ td.ops .mini{margin-right:2px}
       <option value="latency">按响应时间</option>
       <option value="name">按名称</option>
     </select></div>
-    <div class="si"><span>首个站点用内置豆瓣(1开/0关)</span><input id="s_douban_first" type="number" min="0" max="1"></div>
-    <div class="si"><span>首个站点名加聚合时间(1开/0关)</span><input id="s_stamp_name" type="number" min="0" max="1"></div>
-    <div class="si"><span>时间后面的文字</span><input id="s_stamp_suffix" type="text" style="width:110px" placeholder="豆瓣"></div>
     <div class="si"><span>默认档扩展站点数</span><input id="s_ext_default" type="number" min="0" max="600"></div>
     <div class="si"><span>全能档扩展站点数</span><input id="s_ext_all" type="number" min="0" max="600"></div>
     <div class="si"><span>LibreTV 输出 CMS 数</span><input id="s_ltv_cms" type="number" min="0" max="500"></div>
@@ -396,18 +393,20 @@ td.ops .mini{margin-right:2px}
     <div class="si"><span>镜像/加速地址（检查更新用）</span><input id="s_update_mirror" type="text" style="width:280px" placeholder="ghcr.nju.edu.cn/huueng/tvbox-agg"></div>
   </div>
 
-  <h3 class="setgrp">网盘（Alist / OpenList）</h3>
+  <h3 class="setgrp">首页和网盘（Alist / OpenList）</h3>
   <div class="mut" style="font-size:11px;margin-bottom:8px">
-    把网盘目录做成一个普通采集站：客户端里会多出「网盘」分类，点开就是目录，点剧名选剧集。
-    令牌只存在容器里，不会写进导出的备份文件。
+    首站只能有一个：豆瓣、网盘，或者都不用。网盘的令牌只存在容器里，不会写进导出的备份文件。
   </div>
   <div class="setv">
+    <div class="si"><span>首站</span><select id="s_home_site" style="width:170px">
+      <option value="douban">豆瓣（影视墙，海报好看）</option>
+      <option value="alist">网盘（自己的片子放第一）</option>
+      <option value="none">都不用，按资源类型排</option>
+    </select></div>
+    <div class="si"><span>首站名后面加聚合时间(1开/0关)</span><input id="s_stamp_name" type="number" min="0" max="1"></div>
+    <div class="si"><span>首站的名字</span><input id="s_stamp_suffix" type="text" style="width:130px" placeholder="豆瓣 / 网盘"></div>
     <div class="si"><span>Alist 地址</span><input id="s_alist_url" type="text" style="width:260px" placeholder="http://192.168.1.4:5255"></div>
     <div class="si"><span>令牌</span><input id="s_alist_token" type="password" style="width:260px" placeholder="Alist 后台 → 设置 → 其他 → 令牌"></div>
-    <div class="si"><span>作为首页（顶掉豆瓣）</span><select id="s_alist_home" style="width:110px">
-      <option value="0">否，排在豆瓣后面</option>
-      <option value="1">是，放第一个</option>
-    </select></div>
   </div>
   <div style="margin-top:8px">
     <div class="mut" style="font-size:11px">要挂的目录，一行一个（每个子目录会变成一个分类 Tab）</div>
@@ -628,7 +627,7 @@ function renderInner(o){
   const cDedup = c => c.deduped ?? Math.max(0, cProbed(c) - cMerged(c));
 
   const st = o.settings || {};
-  for(const k of ['active_max','merge_room','probe_budget','max_seeds','max_categories','embed_lives','stamp_name','douban_first','stamp_suffix','ext_default','ext_all','ltv_cms','bench_latency','bench_every','config_days','config_max_fail','auto_floor','max_configs','auto_promote','zero_bench','max_per_asset','live_max_test','live_active_n','live_drop_seg_bad','live_tomb_days','live_tomb_max_fail','bench_days','live_auto_promote','live_big_days','live_small_days','live_bench_days','speed_hours','interval_hours','live_lines_per','interval_mode','daily_at','update_mirror'])
+  for(const k of ['active_max','merge_room','probe_budget','max_seeds','max_categories','embed_lives','stamp_name','douban_first','stamp_suffix','ext_default','ext_all','ltv_cms','bench_latency','bench_every','config_days','config_max_fail','auto_floor','max_configs','auto_promote','zero_bench','max_per_asset','live_max_test','live_active_n','live_drop_seg_bad','live_tomb_days','live_tomb_max_fail','bench_days','live_auto_promote','live_big_days','live_small_days','live_bench_days','speed_hours','interval_hours','live_lines_per','interval_mode','daily_at','update_mirror','home_site'])
     if(document.getElementById('s_' + k)) document.getElementById('s_' + k).value = st[k] ?? '';
   document.getElementById('daysHint').textContent = st.config_days || 5;
 
@@ -1380,7 +1379,6 @@ async function loadAlist(){
     const r = await (await fetch('/api/alist', {cache:'no-store'})).json();
     document.getElementById('s_alist_url').value   = r.url || '';
     document.getElementById('s_alist_token').value = r.token || '';
-    document.getElementById('s_alist_home').value  = String(r.as_home || 0);
     document.getElementById('s_alist_roots').value = (r.roots || []).join('\n');
     if(r.url && (r.roots||[]).length){
       document.getElementById('alistTip').innerHTML =
@@ -1393,8 +1391,7 @@ function _alistBody(){
   return {
     url:   document.getElementById('s_alist_url').value.trim(),
     token: document.getElementById('s_alist_token').value.trim(),
-    roots: document.getElementById('s_alist_roots').value,
-    as_home: parseInt(document.getElementById('s_alist_home').value, 10) || 0
+    roots: document.getElementById('s_alist_roots').value
   };
 }
 
@@ -1425,7 +1422,7 @@ async function saveAlist(btn){
 
 async function saveSettings(){
   const body = {};
-  for(const k of ['interval_mode','daily_at','sort_mode','stamp_suffix','update_mirror']){
+  for(const k of ['interval_mode','daily_at','sort_mode','stamp_suffix','update_mirror','home_site']){
     const el2 = document.getElementById('s_' + k);
     if(el2) body[k] = (el2.value || '').trim();
   }

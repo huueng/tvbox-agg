@@ -40,6 +40,34 @@ _RAW_LOCK = threading.Lock()
 _CFG_CACHE = {"ts": 0.0, "doc": None}
 
 
+def _norm_roots(v):
+    """把各种写法的 roots 统一成 ["/a", "/b"]
+
+    接受 list、多行字符串；顺带自愈一种坏数据：
+    之前有人把整个 list 又 str() 了一遍，存成 ["['/a', '/b']"]，这里能拆回来。
+    """
+    if isinstance(v, (list, tuple)):
+        items = [str(x) for x in v]
+    else:
+        items = str(v or "").replace(",", "\n").splitlines()
+    out = []
+    for x in items:
+        t = str(x).strip().strip('"').strip("'").strip()
+        if not t:
+            continue
+        if t.startswith("[") and t.endswith("]"):
+            try:
+                import ast
+                inner = ast.literal_eval(t)
+                if isinstance(inner, (list, tuple)):
+                    out.extend(str(y).strip() for y in inner if str(y).strip())
+                    continue
+            except Exception:
+                pass
+        out.append(t)
+    return out
+
+
 def cfg_path(data_dir):
     return os.path.join(data_dir, "alist.json")
 
@@ -59,7 +87,7 @@ def load_cfg(data_dir):
     doc.setdefault("roots", [])
     doc.setdefault("as_home", 0)
     doc["url"] = str(doc.get("url") or "").rstrip("/")
-    doc["roots"] = [str(x).strip() for x in (doc.get("roots") or []) if str(x).strip()]
+    doc["roots"] = _norm_roots(doc.get("roots"))
     _CFG_CACHE.update(ts=now, doc=doc)
     return doc
 
@@ -68,7 +96,7 @@ def save_cfg(data_dir, doc):
     import state as ST
     doc = dict(doc or {})
     doc["url"] = str(doc.get("url") or "").strip().rstrip("/")
-    doc["roots"] = [str(x).strip() for x in (doc.get("roots") or []) if str(x).strip()]
+    doc["roots"] = _norm_roots(doc.get("roots"))
     doc["as_home"] = 1 if doc.get("as_home") else 0
     ST.save_file(cfg_path(data_dir), doc)
     _CFG_CACHE.update(ts=0.0, doc=None)

@@ -1423,7 +1423,9 @@ SETTING_DEFAULTS = {
     "probe_budget": 40,      # 每轮最多体检多少个（按最久没探的轮转）
     "max_categories": 12,    # 每个站点最多铺几个分类 Tab（站点自带几十个，多了没用）
     "sort_mode": "kind",      # 输出顺序：kind=按资源类型(默认) / latency=按响应时间 / name=按名称
-    "douban_first": 1,        # 首个站点固定用内置豆瓣（影视墙、响应快，不占站点名额）
+    # 首站：douban=内置豆瓣 / alist=网盘 / none=都不用（三者互斥）
+    "home_site": "douban",
+    "douban_first": 1,        # 旧键，仅为读老配置保留
     "stamp_suffix": "豆瓣",    # 时间后面的文字，用户可改
     "stamp_name": 1,         # 首个站点名前加「聚合时间」，方便判断客户端是不是用的旧配置
     "live_tomb_days": 15,        # 屏蔽/删除的源多久复检一次（天）
@@ -2444,20 +2446,22 @@ def run_pipeline(seeds_path=None, out_dir=None, workers=3, timeout=20,
     if int(stg.get("embed_lives", 1)):
         for _doc in (tvbox, allp):
             embed_lives(_doc, data_dir, lines_per=int(stg.get("live_lines_per") or 4))
-    _suffix = str(stg.get("stamp_suffix") or "豆瓣").strip() or "豆瓣"
-    # 网盘（Alist）：做成一个普通 CMS 站点。as_home=1 时顶掉豆瓣当首页
-    _asite, _ahome = None, 0
+    # 网盘（Alist）：做成一个普通 CMS 站点；排第几由 home_site 决定
+    _asite = None
     try:
         import alist as _AL
-        _cfg_a = _AL.load_cfg(data_dir)
-        _ahome = int(_cfg_a.get("as_home") or 0)
         _asite = _AL.site_entry(data_dir, proxy_base or "")
     except Exception as e:                              # noqa: BLE001
         log("  跳过网盘站点：%s" % e)
     if _asite:
         _asite = {k: v for k, v in _asite.items() if not str(k).startswith("_")}
 
-    if int(stg.get("douban_first", 1)) and not _ahome:
+    _home = str(stg.get("home_site") or "").strip()
+    if not _home:                       # 老配置没有这个键，按 douban_first 推断
+        _home = "douban" if int(stg.get("douban_first", 1)) else "none"
+    _suffix = str(stg.get("stamp_suffix") or "").strip()
+
+    if _home == "douban":
         for _doc in (tvbox, allp):
             _jar = pick_douban_jar(_doc.get("sites") or [], log=log,
                                    cache_dir=data_dir)
@@ -2466,21 +2470,25 @@ def run_pipeline(seeds_path=None, out_dir=None, workers=3, timeout=20,
                 continue
             # csp_Douban 要靠配置级 spider 才能加载，必须写上
             _doc["spider"] = _jar
-            if insert_douban(_doc, _suffix):
+            if insert_douban(_doc, _suffix or "豆瓣"):
                 log("  首个站点：内置豆瓣（spider=%s）" % _jar[-34:])
     if _asite:
+        # 首站是网盘时，名字跟着「时间后面的文字」走；没填就用「网盘」
+        if _home == "alist":
+            _asite["name"] = (_suffix if _suffix and _suffix != "豆瓣" else "网盘")
         for _doc in (tvbox, direct, allp):
             _sites = [x for x in (_doc.get("sites") or [])
                       if x.get("key") != _asite["key"]]
-            if _ahome:
-                _sites = [x for x in _sites if x.get("key") != "douban"]
+            if _home == "alist":
                 _sites.insert(0, dict(_asite))
-            else:
+            elif _home == "douban":
                 pos = 1 if _sites and _sites[0].get("key") == "douban" else 0
                 _sites.insert(pos, dict(_asite))
+            else:
+                _sites.append(dict(_asite))
             _doc["sites"] = _sites
-        log("  网盘站点：%s%s" % ("作为首站（顶掉豆瓣）" if _ahome else "排在豆瓣之后",
-                                ""))
+        log("  网盘站点：%s" % ({"alist": "作为首站", "douban": "排在豆瓣之后"}
+                              .get(_home, "排在最后")))
 
     stamp = (time.strftime("%Y-%m-%d  %H:%M")
              if int(stg.get("stamp_name", 1)) else "")
