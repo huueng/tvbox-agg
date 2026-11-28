@@ -40,7 +40,7 @@ import sys
 import state as ST
 
 # 版本号：发版时只改这里（面板、HTTP 头、更新检查都读它）
-VERSION = "0.9.10"
+VERSION = "0.9.11"
 REGISTRY = "ghcr.io"
 IMAGE_REPO = "huueng/tvbox-agg"
 import threading

@@ -186,7 +186,6 @@ td.ops .mini{margin-right:2px}
     <h2>需要留意 <span class="mut" id="warnCount"></span>
       <button class="mini" style="float:right" onclick="gateScan()">重扫插件</button></h2>
     <table id="warns" class="tight"></table>
-  <div id="gateBox" style="margin-top:10px"></div>
     <div class="mut" style="margin-top:6px;font-size:11px">
       只读配置判定，被拦的站点不会进任何输出档。
     </div>
@@ -541,6 +540,11 @@ td.ops .mini{margin-right:2px}
 </div>
 
 <div class="card">
+  <h2>插件安全扫描 <span class="mut">（被拦下的插件，可单独放行）</span></h2>
+  <div id="gateBox"><span class="mut">加载中…</span></div>
+</div>
+
+<div class="card">
   <h2>历史轮次 <span class="mut">（每轮聚合的体检记录）</span></h2>
   <svg class="spark" id="spark" viewBox="0 0 600 64" preserveAspectRatio="none"></svg>
   <div class="mut" id="sparkNote"></div>
@@ -744,6 +748,7 @@ function renderInner(o){
       : '<tr><td class="mut">没有问题，这里是空的</td></tr>';
   loadGate();
 
+  loadGate();
   const cp = (o.settings && o.settings.custom_path) ? ('/' + o.settings.custom_path) : '/custom';
   const eps = [
     ['/tvbox', '默认档：CMS + jar + py（影视仓填这个）'],
@@ -1490,6 +1495,40 @@ async function saveAlist(btn){
     toast('网盘配置已保存');
   }catch(e){ tip.innerHTML = '<span class="bad">出错：' + e + '</span>'; }
   finally{ done(); }
+}
+
+async function loadGate(){
+  const box = document.getElementById('gateBox');
+  if(!box) return;
+  try{
+    const r = await (await fetch('/api/jargate', {cache:'no-store'})).json();
+    const items = r.items || [];
+    if(!items.length){ box.innerHTML = ''; return; }
+    box.innerHTML =
+      '<div class="mut" style="font-size:11px;margin:8px 0 2px">' +
+      '这些插件被判为有风险，相关站点已从输出里移除。放行后下轮聚合生效（风险自负）。</div>' +
+      '<table class="tight"><tr><th>插件</th><th>原因</th><th class="num">站点</th><th>操作</th></tr>' +
+      items.map(function(x){
+        const t = esc(x.url || '');
+        const btn = x.allow
+          ? `<button class="mini" onclick="gateAllow(this,0,'${t}')">已放行·收回</button>`
+          : `<button class="mini" onclick="gateAllow(this,1,'${t}')">放行</button>`;
+        return `<tr><td style="font-family:ui-monospace,monospace;font-size:11px">${esc(x.name)}</td>` +
+          `<td class="mut" style="font-size:11px">${esc(x.why)}</td>` +
+          `<td class="num">${x.sites || 0}</td><td>${btn}</td></tr>`;
+      }).join('') + '</table>';
+  }catch(e){ box.innerHTML = ''; }
+}
+
+async function gateAllow(btn, on, url){
+  if(!url) return;
+  if(on && !confirm('放行这个插件？\n\n它会随配置下发到客户端执行。\n不确定它干了什么的话，建议保持拦截。')) return;
+  btn.disabled = true;
+  try{
+    const r = await api('/api/jargate/allow', {url: url, allow: !!on});
+    toast(r.error ? r.error : (on ? '已放行，下轮聚合生效' : '已恢复拦截'), !!r.error);
+    loadGate();
+  }finally{ btn.disabled = false; }
 }
 
 async function saveSettings(){
