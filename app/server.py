@@ -901,8 +901,11 @@ class Handler(BaseHTTPRequestHandler):
             return proto + "://" + host
         if CFG["base_url"]:
             return CFG["base_url"].rstrip("/")
-        host = "%s:%s" % self.server.server_address
-        return "http://" + host
+        # 绑 0.0.0.0 时 server_address 是 0.0.0.0，不能直接拼给客户端
+        h, port = self.server.server_address[:2]
+        if h in ("0.0.0.0", "::"):
+            h = guess_lan_ip() or "127.0.0.1"
+        return "http://%s:%s" % (h, port)
 
     def _loc(self, target):
         """跳转用相对地址
@@ -1114,6 +1117,11 @@ class Handler(BaseHTTPRequestHandler):
                                                   (LIVE_RUN["mode"] or "未知")})
             run_async()
             return self._send(202, {"started": True})
+        # 网盘播放测试页：直接把地址丢给 <video>，用来判断是流的问题还是客户端的问题
+        if path in ("/alist/test", "/alist/test/"):
+            return self._send(200, AL.test_page(
+                urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query,
+                                      keep_blank_values=True)), "text/html; charset=utf-8")
         # 网盘播放转发：客户端只访问我们，视频流由容器转给 OpenList
         if path in ("/alist/p", "/alist/p/"):
             return self._alist_relay(urllib.parse.parse_qs(
@@ -1830,6 +1838,12 @@ class Handler(BaseHTTPRequestHandler):
         url = AL.raw_url(cfg, path)
         if not url:
             return self._send(404, {"error": "取不到直链（文件可能已被移动）"})
+
+        # 播放器缓冲满了会暂停读取，30 秒的连接超时会把它当死连接掐掉
+        try:
+            self.connection.settimeout(None)
+        except Exception:
+            pass
 
         hdrs = {"User-Agent": "TVBoxAgg"}
         rng = self.headers.get("Range")

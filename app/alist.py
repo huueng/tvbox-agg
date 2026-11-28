@@ -446,3 +446,31 @@ def site_entry(data_dir, base):
             "type": 1, "api": (base or "").rstrip("/") + "/alist",
             "searchable": 0, "quickSearch": 0,
             "ext": (cfg["url"] or ""), "_classes": len(cls)}
+
+
+def test_page(params):
+    """网页播放测试页
+
+    直接把播放地址塞进 <video>：浏览器能播，说明流没问题，锅在客户端；
+    播不了，就是转发出问题。排查用，不做播放器。
+    """
+    p0 = (params.get("p") or [""])[0]
+    url = ("/alist/p?p=" + urllib.parse.quote(p0)) if p0 else ""
+    try:
+        n = pid(p0) if p0 else ""
+    except Exception:
+        n = ""
+    name = os.path.basename(n) if n else "（没给 p 参数）"
+    return """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>网盘播放测试</title>
+<style>body{background:#141414;color:#ddd;font:14px system-ui;margin:0;padding:20px}
+video{width:100%%;max-height:70vh;background:#000;border-radius:6px}
+.m{color:#8b949e;font-size:12px;word-break:break-all;margin:8px 0}
+code{background:#222;padding:1px 4px;border-radius:3px}</style></head><body>
+<h3>网盘播放测试</h3>
+<div class="m">文件：%s</div>
+<div class="m">地址：<code>%s</code></div>
+<div class="m">浏览器能播 → 流没问题，问题在客户端解码/网络；播不了 → 转发出问题。</div>
+<video src="%s" controls autoplay playsinline></video>
+<div class="m">提示：如果一直转圈，打开浏览器 F12 → Network 看 <code>/alist/p</code> 的状态码和大小。</div>
+</body></html>""" % (name, url or "（无）", url)
