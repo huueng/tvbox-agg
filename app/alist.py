@@ -474,3 +474,69 @@ code{background:#222;padding:1px 4px;border-radius:3px}</style></head><body>
 <video src="%s" controls autoplay playsinline></video>
 <div class="m">提示：如果一直转圈，打开浏览器 F12 → Network 看 <code>/alist/p</code> 的状态码和大小。</div>
 </body></html>""" % (name, url or "（无）", url)
+
+
+def diag_page(params, data_dir=None):
+    """浏览器自检页：把 fetch 看到的状态码/响应头/字节数 + video 的报错都显示出来
+
+    用 curl 测都正常但浏览器播不了时，用它一次看清差异在哪。
+    """
+    p0 = (params.get("p") or [""])[0]
+    return """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>网盘播放自检</title>
+<style>body{background:#0d1117;color:#c9d1d9;font:13px/1.7 ui-monospace,Consolas,monospace;padding:18px}
+h3{font-family:system-ui;margin:0 0 12px}
+.b{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:12px;margin:10px 0;white-space:pre-wrap;word-break:break-all}
+.ok{color:#3fb950}.bad{color:#f85149}.warn{color:#d29922}
+video{width:100%%;max-height:220px;background:#000;margin-top:10px;border-radius:6px}</style></head><body>
+<h3>网盘播放自检</h3>
+<div class="b" id="out">正在检测…</div>
+<video id="v" controls playsinline src="/alist/p?p=%s"></video>
+<script>
+const P = %s;
+const out = document.getElementById('out');
+const lines = [];
+function log(s){ lines.push(s); out.innerHTML = lines.join('\\n'); }
+const code = c => (c >= 200 && c < 300) ? `<span class="ok">${c}</span>` : `<span class="bad">${c}</span>`;
+
+(async () => {
+  // 1) 头部探测（Range 0-1023）
+  try {
+    const r = await fetch('/alist/p?p=' + P, {headers: {'Range': 'bytes=0-1023'}});
+    log('Range 探测 → ' + code(r.status) + '  ' + r.statusText);
+    const h = {};
+    r.headers.forEach((v, k) => h[k] = v);
+    log('响应头:\\n' + JSON.stringify(h, null, 2));
+    const buf = await r.arrayBuffer();
+    const b = new Uint8Array(buf);
+    log('实际收到: ' + b.length + ' 字节' + (b.length === 1024 ? ' <span class="ok">✓</span>' : ' <span class="warn">← 不是 1024</span>'));
+    log('前 16 字节: ' + Array.from(b.slice(0, 16)).map(x => x.toString(16).padStart(2,'0')).join(' '));
+    const txt = new TextDecoder().decode(b.slice(0, 200));
+    log('开头是否有 ftyp: ' + (txt.includes('ftyp') ? '<span class="ok">有 ✓</span>' : '<span class="bad">没有 ✗</span>'));
+  } catch (e) {
+    log('<span class="bad">Range 探测失败: ' + e + '</span>');
+  }
+
+  // 2) 完整首段（不带 Range，看是否 200）
+  try {
+    const r2 = await fetch('/alist/p?p=' + P, {headers: {'Range': 'bytes=0-'}});
+    log('\\nbytes=0- 请求 → ' + code(r2.status) + '  Content-Length=' +
+        (r2.headers.get('content-length') || '(无)'));
+  } catch (e) { log('<span class="bad">bytes=0- 失败: ' + e + '</span>'); }
+
+  // 3) video 元素的真实报错
+  const v = document.getElementById('v');
+  v.addEventListener('error', () => {
+    const c = v.error ? v.error.code : 0;
+    const m = {1:'加载被中断', 2:'网络错误', 3:'解码失败', 4:'格式不支持或文件损坏'}[c] || '未知';
+    log('\\n<span class="bad">video 报错 code=' + c + ' → ' + m + '</span>');
+    log('readyState=' + v.readyState + ' networkState=' + v.networkState);
+  });
+  v.addEventListener('loadedmetadata', () => log('\\n<span class="ok">video 拿到元数据 ✓ 时长 ' + v.duration.toFixed(1) + 's</span>'));
+  setTimeout(() => {
+    log('\\n3 秒后: readyState=' + v.readyState + ' networkState=' + v.networkState +
+        ' 当前错误=' + (v.error ? v.error.code : '无'));
+    log('<span class="warn">readyState: 0=无数据 1=有元数据 2=有当前帧 3=可播 4=可流畅播</span>');
+  }, 3000);
+})();
+</script></body></html>""" % (p0, '"' + p0 + '"')

@@ -1117,6 +1117,11 @@ class Handler(BaseHTTPRequestHandler):
                                                   (LIVE_RUN["mode"] or "未知")})
             run_async()
             return self._send(202, {"started": True})
+        if path in ("/alist/diag", "/alist/diag/"):
+            return self._send(200, AL.diag_page(
+                urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query,
+                                      keep_blank_values=True),
+                self._data_dir()), "text/html; charset=utf-8")
         # 网盘播放测试页：直接把地址丢给 <video>，用来判断是流的问题还是客户端的问题
         if path in ("/alist/test", "/alist/test/"):
             return self._send(200, AL.test_page(
@@ -1833,9 +1838,10 @@ class Handler(BaseHTTPRequestHandler):
         d = self._data_dir()
         cfg = AL.load_cfg(d)
         raw = (params.get("p") or [""])[0]
-        path = AL.pid(raw)
+        # 一定要带上数据目录：数字 id 要靠 alist_ids.json 反查路径
+        path = AL.pid(raw, d)
         if not path:
-            return self._send(400, {"error": "缺 p 参数"})
+            return self._send(400, {"error": "p 参数无效（文件可能已不在）"})
         url = AL.raw_url(cfg, path)
         if not url:
             return self._send(404, {"error": "取不到直链（文件可能已被移动）"})
@@ -1870,6 +1876,9 @@ class Handler(BaseHTTPRequestHandler):
             # 允许缓存分片：播放器 seek 时不至于每次都重新找网盘要一遍
             self.send_header("Cache-Control", "private, max-age=3600")
             self.end_headers()
+            if self.command == "HEAD":
+                # HEAD 只要头，不能真把 400MB 灌回去（浏览器探测时会发 HEAD）
+                return
             while True:
                 chunk = up.read(64 * 1024)
                 if not chunk:
