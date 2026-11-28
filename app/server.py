@@ -1871,6 +1871,15 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             code = getattr(up, "status", None) or getattr(up, "code", 200)
+            try:
+                CMS_LOG.append({
+                    "t": time.strftime("%H:%M:%S"), "key": "alist-play",
+                    "q": "p=%s rng=%s" % (raw[:16], (rng or "-")[:26]),
+                    "cache": False, "size": 0,
+                    "ua": (self.headers.get("User-Agent") or "")[:28],
+                    "err": "" if code in (200, 206) else str(code)})
+            except Exception:
+                pass
             self.send_response(code)
             for k in ("Content-Type", "Content-Length", "Content-Range",
                       "Last-Modified", "ETag"):
@@ -1878,8 +1887,9 @@ class Handler(BaseHTTPRequestHandler):
                 if v:
                     self.send_header(k, v)
             self.send_header("Accept-Ranges", "bytes")
-            # 允许缓存分片：播放器 seek 时不至于每次都重新找网盘要一遍
-            self.send_header("Cache-Control", "private, max-age=3600")
+            # 不要缓存：视频是分片请求，同一个 URL 会有几十个不同 Range 的响应，
+            # 客户端按 URL 做缓存会把分片搅在一起，表现为"黑屏/放到一半坏掉"
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             if self.command == "HEAD":
                 # HEAD 只要头，不能真把 400MB 灌回去（浏览器探测时会发 HEAD）
