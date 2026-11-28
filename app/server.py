@@ -1890,6 +1890,10 @@ class Handler(BaseHTTPRequestHandler):
             # 不要缓存：视频是分片请求，同一个 URL 会有几十个不同 Range 的响应，
             # 客户端按 URL 做缓存会把分片搅在一起，表现为"黑屏/放到一半坏掉"
             self.send_header("Cache-Control", "no-store")
+            # 每个播放请求用独立连接：ExoPlayer 会复用连接，而我们的转发是
+            # 一条一条线程读上游的，复用容易在 seek 时卡住（IJK 不复用所以没事）
+            self.send_header("Connection", "close")
+            self.close_connection = True
             self.end_headers()
             if self.command == "HEAD":
                 # HEAD 只要头，不能真把 400MB 灌回去（浏览器探测时会发 HEAD）
