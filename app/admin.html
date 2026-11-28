@@ -159,7 +159,7 @@ td.ops .mini{margin-right:2px}
 <div class="card">
   <div class="row">
     <div class="mut" style="flex:1;min-width:200px">已登录（会话 7 天有效，换浏览器要重新输密码）</div>
-    <button class="pri" onclick="refreshRun(this)">立即聚合 · 点播</button>
+    <button class="pri" data-pvod-btn onclick="refreshRun(this)">立即聚合 · 点播</button>
     <button class="pri" onclick="refreshLive(this)">立即聚合 · 直播</button>
     <button onclick="rollback()">退回上一次成功</button>
     <a href="/report.md" target="_blank"><button>体检报告</button></a>
@@ -247,10 +247,10 @@ td.ops .mini{margin-right:2px}
     <a class="btn" href="/cctv.m3u" target="_blank">直播主 cctv.m3u（央视+卫视）</a>
     <a class="btn" href="/other.m3u" target="_blank">直播副 other.m3u（全量）</a>
     <button onclick="liveRefresh()">重新测速</button>
-    <button class="pri" onclick="liveRun('both')">立即大聚合+小聚合</button>
-    <button onclick="liveRun('big')">大聚合</button>
-    <button onclick="liveRun('small')">小聚合</button>
-    <button onclick="liveRun('screen')">备选初筛</button>
+    <button class="pri" data-live-btn onclick="liveRun('both', this)">立即大聚合+小聚合</button>
+    <button data-live-btn onclick="liveRun('big', this)">大聚合</button>
+    <button data-live-btn onclick="liveRun('small', this)">小聚合</button>
+    <button data-live-btn onclick="liveRun('screen', this)">备选初筛</button>
   </div>
   <div style="margin-top:10px"><table id="lives"></table></div>
 </div>
@@ -356,7 +356,7 @@ td.ops .mini{margin-right:2px}
     <div class="si"><span>默认档扩展站点数</span><input id="s_ext_default" type="number" min="0" max="600"></div>
     <div class="si"><span>全能档扩展站点数</span><input id="s_ext_all" type="number" min="0" max="600"></div>
     <div class="si"><span>LibreTV 输出 CMS 数</span><input id="s_ltv_cms" type="number" min="0" max="500"></div>
-    <div class="si"><span>输出里带直播(1开/0关)</span><input id="s_embed_lives" type="number" min="0" max="1"></div>
+    <div class="si"><span title="点播聚合时，把当时已测好的央视+卫视线路写进配置的 lives；直播还没跑过就写入空">输出里带直播（1开/0关）</span><input id="s_embed_lives" type="number" min="0" max="1"></div>
   </div>
 
   <h3 class="setgrp">配置接口</h3>
@@ -567,8 +567,15 @@ function renderInner(o){
   const c = o.counts || {};
   const lvst = o.live || {};
   const liveTxt = lvst.running
-    ? `<span class="warn">${esc(lvst.mode || '直播聚合')}中 ${lvst.since || 0}s</span>`
-    : '空闲';
+    ? `<span class="warn">${esc(lvst.mode || '直播聚合')} 聚合中 ${lvst.since || 0}s</span>`
+    : (o.running
+        ? '<span class="mut">等待点播聚合完成（点播跑着时直播不能启动）</span>'
+        : '空闲');
+  // 记住当前状态，按钮据此给即时反馈，不用等接口报错
+  AGG_STATE.running = !!o.running;
+  AGG_STATE.live = !!lvst.running;
+  AGG_STATE.elapsed = o.elapsed || 0;
+  syncLiveButtons();
   document.getElementById('head').innerHTML =
     '<b>点播</b>：' + esc(o.last_run || '从未') +
     ' ｜ 耗时 ' + (o.elapsed || '-') + 's ｜ ' +
@@ -1146,14 +1153,41 @@ async function cfgTier(tier, url){
   loadAll();
 }
 
-async function liveRun(mode){
+const AGG_STATE = {running: false, live: false, elapsed: 0};
+
+function syncLiveButtons(){
+  document.querySelectorAll('[data-pvod-btn]').forEach(function (b) {
+    b.disabled = AGG_STATE.live;
+    b.title = AGG_STATE.live ? '直播聚合进行中，等它结束再启动点播' : '';
+  });
+  document.querySelectorAll('[data-live-btn]').forEach(function (b) {
+    const busy = AGG_STATE.running || AGG_STATE.live;
+    b.disabled = busy;
+    b.title = AGG_STATE.running
+      ? '点播聚合进行中，等它结束再启动直播'
+      : (AGG_STATE.live ? '直播聚合已在进行中' : '');
+  });
+}
+
+async function liveRun(mode, btn){
+  // 先在前端拦一道：清楚告诉用户为什么点不动，而不是静默失败
+  if(AGG_STATE.running){
+    return toast('点播聚合进行中，等它跑完再启动直播（两者不能同时跑）', true);
+  }
+  if(AGG_STATE.live){
+    return toast('直播聚合已经在跑了，等它结束', true);
+  }
+  if(btn) btn.disabled = true;
   const r = await api('/api/live/' + mode, {});
-  toast(r.error ? r.error : ({
+  if(btn) btn.disabled = false;
+  if(r.error){ toast(r.error, true); return; }
+  toast(({
     both: '已开始：大聚合 + 小聚合（几分钟）',
     big: '已开始大聚合：重新展开优选源的 TXT/M3U',
     small: '已开始小聚合：只测线路',
     screen: '已开始备选初筛：只解析频道数'
-  })[mode] || '已开始', !!r.error);
+  })[mode] || '已开始');
+  loadAll();
 }
 
 async function liveParse(btn, url){
@@ -1362,6 +1396,9 @@ async function refreshLive(btn){
 }
 
 async function refreshRun(btn){
+  if(AGG_STATE.live){
+    return toast('直播聚合进行中，等它跑完再启动点播（两者不能同时跑）', true);
+  }
   const r = await (await fetch('/refresh')).json();
   toast(r.started ? '已开始重新聚合（约 3~5 分钟）' : ('没启动：' + (r.reason || r.error || '未知')), !r.started);
   setTimeout(loadAll, 3000);

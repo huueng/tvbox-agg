@@ -31,6 +31,7 @@
 
 import argparse
 import collections
+import hashlib
 import json
 import os
 import re
@@ -39,7 +40,7 @@ import sys
 import state as ST
 
 # 版本号：发版时只改这里（面板、HTTP 头、更新检查都读它）
-VERSION = "0.9.8"
+VERSION = "0.9.9"
 REGISTRY = "ghcr.io"
 IMAGE_REPO = "huueng/tvbox-agg"
 import threading
@@ -69,6 +70,9 @@ _CMS_MAX = 400
 _PARAM_LEARNED = {}      # key -> "t" | "type_id"（运行时学到的方言）
 
 CFG = {
+    # 只有在反向代理后面才开启：TRUST_PROXY=1，之后才采信 X-Forwarded-For。
+    # 默认关闭 —— 这个头谁都能写，无脑采信等于让人随便换 IP 绕过限流。
+    "trust_proxy": bool(int(os.environ.get("TRUST_PROXY") or 0)),
     "seeds": os.path.join(HERE, "sources.json"),
     "out": os.path.join(HERE, "out"),
     "state": os.path.join(HERE, "state.json"),
@@ -462,6 +466,7 @@ MSG_MAX_ITEMS = 500
 MSG_TEXT_MAX = 500
 MSG_NICK_MAX = 20
 MSG_RATE = {}          # ip -> [ts, ...]
+MSG_LOCK = threading.Lock()   # 留言是"读整个文件 → 改 → 写回"，必须串行
 MSG_GAP = 30           # 秒
 MSG_DAY_MAX = 30
 
@@ -493,6 +498,9 @@ def _msg_clean(t, limit):
 
 def msg_rate_ok(ip):
     now = time.time()
+    if len(MSG_RATE) > 4000:                  # 被刷时不至于把内存撑爆
+        for k in [k for k, v in MSG_RATE.items() if not v or now - v[-1] > 86400]:
+            MSG_RATE.pop(k, None)
     hist = [t for t in MSG_RATE.get(ip, []) if now - t < 86400]
     if hist and now - hist[-1] < MSG_GAP:
         return False, "发太快了，%d 秒后再试" % int(MSG_GAP - (now - hist[-1]))
@@ -691,6 +699,8 @@ def cms_fetch(key, query_pairs):
 # ---------------------------------------------------------------- HTTP
 
 class Handler(BaseHTTPRequestHandler):
+    # 慢连接保护：客户端一直不发数据/不读响应时，别把线程永远占着
+    timeout = 30
     server_version = "TVBoxAgg/" + VERSION
     protocol_version = "HTTP/1.1"
 
@@ -774,16 +784,24 @@ class Handler(BaseHTTPRequestHandler):
         return out
 
     def _client_ip(self):
-        fwd = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-        if fwd:
-            return fwd
-        real = (self.headers.get("X-Real-IP") or "").strip()
-        if real:
-            return real
+        """真实客户端 IP
+
+        默认只用 TCP 对端地址：X-Forwarded-For 是谁都能写的，
+        无条件采信等于让人随便换 IP 绕过留言限流。
+        放在反向代理后面时，用环境变量 TRUST_PROXY=1 显式开启。
+        """
         try:
-            return self.client_address[0]
+            peer = self.client_address[0]
         except Exception:
-            return ""
+            peer = ""
+        if CFG.get("trust_proxy"):
+            fwd = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+            if fwd:
+                return fwd
+            real = (self.headers.get("X-Real-IP") or "").strip()
+            if real:
+                return real
+        return peer
 
     def _req_base(self):
         """这次请求是从哪个地址打进来的
@@ -903,6 +921,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, self._export_txt(), "text/plain; charset=utf-8",
                               {"Content-Disposition":
                                'attachment; filename="%s"' % self.EXPORT_NAME})
+        # 报告里有每个站的评分、被移除原因，属于"内部判断"，不公开
+        if path in ("/report.json", "/report.md", "/devtest") \
+                and not self._auth_ok(q):
+            return self._send(401, {"error": "需要登录", "login": "/login"})
         if path == "/report.json":
             return self._send(200, CACHE["report"])
         if path == "/report.md":
@@ -970,6 +992,9 @@ class Handler(BaseHTTPRequestHandler):
             items = msg_load(self._data_dir())
             items = sorted(items, key=lambda x: (0 if x.get("pinned") else 1,
                                                  -(x.get("ts") or 0)))
+            # 白名单字段：绝不能把 ip / ip_h 这类东西吐给公开接口
+            _PUB = ("id", "ts", "nick", "text", "reply", "reply_ts", "pinned")
+            items = [{k: it.get(k) for k in _PUB} for it in items]
             return self._send(200, {
                 "items": items[:200],
                 "admin": bool(self._auth_ok({})),
@@ -1050,6 +1075,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "only /api/* accepts POST"})
         q = urllib.parse.parse_qs(u.query)
         n = int(self.headers.get("Content-Length") or 0)
+        if n > 2 * 1024 * 1024:      # 正常请求最大也就几十 KB，超了直接拒绝
+            return self._send(413, {"error": "请求体太大"})
         raw = self.rfile.read(n) if n else b""
 
         if path == "/login":
@@ -1085,11 +1112,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"ok": False, "error": "写点什么再发"})
             nick = _msg_clean(mb.get("nick"), MSG_NICK_MAX) or "匿名"
             d = self._data_dir()
-            items = msg_load(d)
-            items.append({"id": int(time.time() * 1000), "ts": int(time.time()),
-                          "nick": nick, "text": text, "ip": ip[:40],
-                          "reply": "", "reply_ts": 0, "pinned": 0})
-            msg_save(d, items)
+            with MSG_LOCK:
+                items = msg_load(d)
+                items.append({"id": int(time.time() * 1000), "ts": int(time.time()),
+                              "nick": nick, "text": text,
+                              # 只留短哈希：够定位刷屏来源，又不至于存访客 IP
+                              "ip_h": hashlib.sha256(ip.encode()).hexdigest()[:12],
+                              "reply": "", "reply_ts": 0, "pinned": 0})
+                msg_save(d, items)
             return self._send(200, {"ok": True})
 
         if not self._auth_ok(q):
@@ -1353,35 +1383,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self._config_add(body))
             if path == "/api/msg/reply":
                 d = self._data_dir()
-                items = msg_load(d)
-                mid = int(body.get("id") or 0)
-                reply = _msg_clean(body.get("reply"), MSG_TEXT_MAX)
-                hit = False
-                for it in items:
-                    if int(it.get("id") or 0) == mid:
-                        it["reply"], it["reply_ts"] = reply, int(time.time())
-                        hit = True
-                        break
-                if not hit:
-                    return self._send(404, {"ok": False, "error": "这条留言不在了"})
-                msg_save(d, items)
-                return self._send(200, {"ok": True})
+                with MSG_LOCK:
+                    return self._send(200, self._msg_reply(d, body))
             if path == "/api/msg/pin":
                 d = self._data_dir()
-                items = msg_load(d)
-                mid = int(body.get("id") or 0)
-                for it in items:
-                    if int(it.get("id") or 0) == mid:
-                        it["pinned"] = 1 if body.get("pinned") else 0
-                        break
-                msg_save(d, items)
-                return self._send(200, {"ok": True})
+                with MSG_LOCK:
+                    return self._send(200, self._msg_pin(d, body))
             if path == "/api/msg/del":
                 d = self._data_dir()
-                mid = int(body.get("id") or 0)
-                items = [x for x in msg_load(d) if int(x.get("id") or 0) != mid]
-                msg_save(d, items)
-                return self._send(200, {"ok": True})
+                with MSG_LOCK:
+                    return self._send(200, self._msg_del(d, body))
             if path == "/api/config/import":
                 return self._send(200, self._config_import(body))
             if path == "/api/config/sync":
@@ -1982,6 +1993,36 @@ class Handler(BaseHTTPRequestHandler):
                 seen.add(k)
                 out.append(t)
         return out
+
+    def _msg_find(self, d, mid):
+        items = msg_load(d)
+        for it in items:
+            if int(it.get("id") or 0) == mid:
+                return items, it
+        return items, None
+
+    def _msg_reply(self, d, body):
+        items, it = self._msg_find(d, int(body.get("id") or 0))
+        if it is None:
+            return {"ok": False, "error": "这条留言不在了"}
+        it["reply"] = _msg_clean(body.get("reply"), MSG_TEXT_MAX)
+        it["reply_ts"] = int(time.time())
+        msg_save(d, items)
+        return {"ok": True}
+
+    def _msg_pin(self, d, body):
+        items, it = self._msg_find(d, int(body.get("id") or 0))
+        if it is None:
+            return {"ok": False, "error": "这条留言不在了"}
+        it["pinned"] = 1 if body.get("pinned") else 0
+        msg_save(d, items)
+        return {"ok": True}
+
+    def _msg_del(self, d, body):
+        mid = int(body.get("id") or 0)
+        items = [x for x in msg_load(d) if int(x.get("id") or 0) != mid]
+        msg_save(d, items)
+        return {"ok": True}
 
     def _config_import(self, body):
         """导入 txt：接口/屏蔽/镜像都是合并去重，设置项可选覆盖"""

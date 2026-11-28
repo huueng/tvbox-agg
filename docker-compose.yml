@@ -33,5 +33,14 @@ services:
       - DROP_AFTER=${DROP_AFTER:-3}
       # 站点 API 走 /cms/ 代理，兼容性更好
       - PROXY=${PROXY:-1}
+      # 放在反向代理（nginx/lucky）后面时设成 1，才会采信 X-Forwarded-For。
+      # 直接对外时别开：这个头谁都能伪造，用来绕过留言板限流。
+      - TRUST_PROXY=${TRUST_PROXY:-0}
       - MAX_ASSETS=${MAX_ASSETS:-25}
       - MAX_JAR_SITES=${MAX_JAR_SITES:-120}
+    # 日志轮转：不加这个，docker 的 json 日志会一直涨（默认不轮转）
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
