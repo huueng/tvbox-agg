@@ -1064,6 +1064,12 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 _s = {}
             return self._send(200, check_update(str(_s.get("update_mirror") or "")))
+        if path == "/api/jargate":        # 被安全扫描拦下的插件
+            import jargate as _JG
+            try:
+                return self._send(200, {"items": _JG.blocked_list(self._data_dir())})
+            except Exception as e:                    # noqa: BLE001
+                return self._send(200, {"items": [], "error": str(e)})
         if path == "/api/alist":          # 读网盘配置（含令牌，必须登录）
             return self._send(200, AL.load_cfg(self._data_dir()))
         if path == "/api/msg/list":
@@ -1551,6 +1557,37 @@ class Handler(BaseHTTPRequestHandler):
                         print("直播测速失败：%s" % e)
                 threading.Thread(target=_bg, daemon=True).start()
                 return self._send(200, {"ok": True, "started": True})
+            if path == "/api/jargate/allow":
+                import jargate as _JG
+                r = _JG.set_allow(self._data_dir(), str(body.get("url") or ""),
+                                  bool(body.get("allow")))
+                return self._send(200 if r.get("ok") else 400, r)
+            if path == "/api/aggregate/all":
+                _d = self._data_dir()
+                if CACHE["running"] or LIVE_RUN["on"] or CACHE.get("all_running"):
+                    return self._send(409, {
+                        "ok": False,
+                        "error": "已经有任务在跑了，等它结束"})
+
+                def _job():
+                    CACHE["all_running"] = True
+                    CACHE["all_step"] = "点播聚合"
+                    try:
+                        run_once()
+                        time.sleep(2)
+                        CACHE["all_step"] = "直播大聚合"
+                        log("全部聚合：开始直播大聚合")
+                        _live_tick(_d, force_big=True, force_screen=True, log=log)
+                        CACHE["all_step"] = ""
+                        log("全部聚合：完成")
+                    except Exception as e:                # noqa: BLE001
+                        log("全部聚合失败：%s" % e)
+                    finally:
+                        CACHE["all_running"] = False
+                        CACHE["all_step"] = ""
+                threading.Thread(target=_job, name="aggregate-all",
+                                 daemon=True).start()
+                return self._send(200, {"ok": True, "started": True})
             if path == "/api/settings":
                 return self._send(200, self._settings(body))
             if path == "/api/config/add":
@@ -1603,6 +1640,8 @@ class Handler(BaseHTTPRequestHandler):
         return {
             "last_run": CACHE.get("last_run"),
             "running": CACHE["running"],
+            "all_running": bool(CACHE.get("all_running")),
+            "all_step": CACHE.get("all_step") or "",
             "error": CACHE.get("last_error"),
             "elapsed": rep.get("elapsed_sec"),
             "counts": {"alive": rep.get("alive"), "grace": rep.get("grace"),

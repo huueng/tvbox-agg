@@ -91,19 +91,21 @@ def scan_bytes(data, label=""):
            "sha256": hashlib.sha256(data).hexdigest()[:16], "ts": time.time()}
 
     if len(data) < 512:
-        out.update(verdict="blocked", reasons=["下载到的不是插件，地址可能已失效"])
+        # 太小多半是地址失效/被墙，不是"有风险"：不能因此把站点从输出里永久赶走
+        out.update(verdict="unknown", reasons=["下载到的不是插件，地址可能已失效"])
         return out
 
     if data[:2] not in (b"PK", b"\x1f\x8b"):
-        # img+ 包裹（jar 藏在图片里）也算这里：扫不了就不放行
-        out.update(verdict="blocked", reasons=["不是有效的 jar（可能是 img+ 包裹或地址失效）"])
+        # 扫不了 ≠ 有风险。按 unknown 处理：保留站点，下轮再扫
+        out.update(verdict="unknown",
+                   reasons=["不是有效的 jar（可能是地址失效，或 img+ 包裹）"])
         return out
 
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
         infos = zf.infolist()
     except Exception as e:
-        out.update(verdict="blocked", reasons=["插件无法解开：%s" % type(e).__name__])
+        out.update(verdict="unknown", reasons=["插件无法解开：%s" % type(e).__name__])
         return out
 
     names = [i.filename for i in infos]
@@ -163,7 +165,7 @@ def scan_url(url, timeout=45, max_bytes=64 * 1024 * 1024):
     """
     real, wrapped = parse_jar_ref(url)
     if wrapped:
-        return {"verdict": "blocked", "size": 0, "sha256": "",
+        return {"verdict": "unknown", "size": 0, "sha256": "",
                 "reasons": ["插件被包在图片里（img+），无法检查"], "ts": time.time()}
     req = urllib.request.Request(real, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -207,7 +209,7 @@ def scan_all(data_dir, urls=None, max_jars=200, workers=3, log=print, force=Fals
         try:
             return u, scan_url(u)
         except Exception as e:
-            return u, {"verdict": "blocked", "size": 0, "sha256": "",
+            return u, {"verdict": "unknown", "size": 0, "sha256": "",
                        "reasons": ["下载失败：%s" % type(e).__name__],
                        "ts": time.time()}
 
@@ -242,5 +244,55 @@ def summary(data_dir):
 
 
 def blocked_urls(data_dir):
+    """真正需要拦下的 jar
+
+    老版本把「下载失败 / 不是 jar / 解不开」也记成 blocked，那是 fail-closed 的
+    副作用：一次网络抖动就能让几十个站点永久从输出里消失。这类不拦，
+    只拦真正的风险（装应用 / 杀进程 / 执行命令 / 夹带 .so / 结构异常）。
+    """
     cur = ST.load(data_dir, "jar_gate.json", {}) or {}
-    return {u for u, v in cur.items() if v.get("verdict") == "blocked"}
+    out = set()
+    for u, v in cur.items():
+        if v.get("verdict") != "blocked":
+            continue
+        if v.get("allow"):          # 用户手动放行过
+            continue
+        why = " ".join(str(x) for x in (v.get("reasons") or []))
+        if any(k in why for k in ("下载失败", "不是有效", "无法解开", "不是插件",
+                                  "体积超过", "HTTPError", "URLError")):
+            continue
+        out.add(u)
+    return out
+
+
+def blocked_list(data_dir):
+    """被拦下的插件清单（面板用）：带上原因和影响的站点数"""
+    cur = ST.load(data_dir, "jar_gate.json", {}) or {}
+    jars = ST.load(data_dir, "jars.json", {}) or {}
+    from collections import Counter
+    cnt = Counter()
+    for s0 in (jars.get("sites") or []):
+        u = s0.get("jar") or ""
+        if u:
+            cnt[u] += 1
+    out = []
+    for u, v in cur.items():
+        if v.get("verdict") != "blocked":
+            continue
+        why = "；".join(str(x) for x in (v.get("reasons") or [])) or "未知"
+        if any(k in why for k in ("下载失败", "不是有效", "无法解开", "不是插件",
+                                  "体积超过")):
+            continue                      # 这类不算风险，不列出来
+        out.append({"url": u, "name": u.split("/")[-1][:40], "why": why,
+                    "sites": cnt.get(u, 0), "allow": bool(v.get("allow"))})
+    out.sort(key=lambda x: -x["sites"])
+    return out
+
+
+def set_allow(data_dir, url, allow=True):
+    cur = ST.load(data_dir, "jar_gate.json", {}) or {}
+    if url not in cur:
+        return {"ok": False, "error": "没有这个插件的扫描记录"}
+    cur[url]["allow"] = bool(allow)
+    ST.save_file(os.path.join(data_dir, "jar_gate.json"), cur)
+    return {"ok": True}
