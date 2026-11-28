@@ -91,21 +91,19 @@ def scan_bytes(data, label=""):
            "sha256": hashlib.sha256(data).hexdigest()[:16], "ts": time.time()}
 
     if len(data) < 512:
-        # 太小多半是地址失效/被墙，不是"有风险"：不能因此把站点从输出里永久赶走
-        out.update(verdict="unknown", reasons=["下载到的不是插件，地址可能已失效"])
+        out.update(verdict="blocked", reasons=["下载到的不是插件，地址可能已失效"])
         return out
 
     if data[:2] not in (b"PK", b"\x1f\x8b"):
-        # 扫不了 ≠ 有风险。按 unknown 处理：保留站点，下轮再扫
-        out.update(verdict="unknown",
-                   reasons=["不是有效的 jar（可能是地址失效，或 img+ 包裹）"])
+        out.update(verdict="blocked",
+                   reasons=["不是有效的 jar（可能是 img+ 包裹）"])
         return out
 
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
         infos = zf.infolist()
     except Exception as e:
-        out.update(verdict="unknown", reasons=["插件无法解开：%s" % type(e).__name__])
+        out.update(verdict="blocked", reasons=["插件无法解开：%s" % type(e).__name__])
         return out
 
     names = [i.filename for i in infos]
@@ -165,8 +163,9 @@ def scan_url(url, timeout=45, max_bytes=64 * 1024 * 1024):
     """
     real, wrapped = parse_jar_ref(url)
     if wrapped:
-        return {"verdict": "unknown", "size": 0, "sha256": "",
-                "reasons": ["插件被包在图片里（img+），无法检查"], "ts": time.time()}
+        # img+ 是故意把 jar 藏在图片里，属于伪装 → 拦
+        return {"verdict": "blocked", "size": 0, "sha256": "",
+                "reasons": ["插件被包在图片里（img+）"], "ts": time.time()}
     req = urllib.request.Request(real, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         data = r.read(max_bytes + 1)
