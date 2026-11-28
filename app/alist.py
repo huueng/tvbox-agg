@@ -387,7 +387,9 @@ def cms(data_dir, params, base=""):
     ids = (params.get("ids") or params.get("id") or [""])[0]
     pg = int((params.get("pg") or ["1"])[0] or 1)
 
-    if ac == "detail" or ids:
+    # 有的客户端（影视仓）用 ac=detail&t=<分类> 取列表，ids 为空；
+    # 所以判断顺序必须是：「有 ids 才当详情」，否则交给下面的 t 分支。
+    if ids:
         path = pid(ids, data_dir)
         if not path:
             return {"list": []}
